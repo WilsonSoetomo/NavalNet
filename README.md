@@ -1,2 +1,1 @@
-# NavalNet
-175 project NavalNet
+# gh-skeleton
