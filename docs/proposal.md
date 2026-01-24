@@ -12,23 +12,23 @@ The goal of this project is to build an AI agent that is competent in playing th
 
 ## 2.3 Project Goals
 
-### Minimum Goal
+#### Minimum Goal
 Create a basic agent that uses a probabilistic or heuristic based strategy to choose successive bombing locations on a game board in a way that at least outperforms choosing random bombing locations.
 
-### Realistic Goal
+#### Realistic Goal
 Train an agent using reinforcement learning, such as Q-learning or Monte Carlo, that independently learns bombing strategies from self-play and consistently beats standard heuristic strategies such as hunt and target or checkerboard search.
 
-### Moonshot Goal
+#### Moonshot Goal
 Create an evolving system where two agents learn successful/optimal strategies for both bombing and ship placement, dynamically exploits opponent behaviour, and consistently matches or even exceeds performance of competent human opponents.
 
 ## 2.4 AI/ML Algorithms
 The main algorithm we will be using is either q-learning or proximal probability estimation, assisted by Monte Carlo Tree Search to improve likelihood of finding ship locations.
 
 ## 2.5 Evaluation Plan
-### Quantitative Evaluation
+#### Quantitative Evaluation
 We will evaluate the agent by running large batches of simulated Battleship games and measuring the average number of moves to win. Baseline strategies that can be used for comparison will include random bombing, checkerboard bombing pattern, and hunt and target (that is, upon obtaining a hit, attack around the hit to find the remaining parts of the ship). Using this measurement, we can also compare the effectiveness of different training methods, such as q-learning and policy gradient. We estimate our agent should be able to improve on the average moves required of at least the basic heuristics (random, checkerboard) by 15- 30%.
 
-### Qualitative Evaluation
+#### Qualitative Evaluation
 We can visualize games played by our agent using heatmaps of shot probabilities and keeping a record of games. This way, we can verify that the agent is indeed learning from its mistakes, and if not, observe the cases where the agent performed poorly and make corrections. Another way we can qualitatively evaluate our agent is simply to have a human play some games against it, and observing the bombing locations of the agent during the game. If possible, we can also have the model play itself and self-learn for multiple iterations. For a successful result, we expect to observe non-random bombing patterns and/or some sort of strategy.
 
 ## 2.6 AI tool usage
