@@ -24,6 +24,8 @@ def run_episode(
 ) -> tuple[float, int, bool]:
     """
     Run one episode. Returns (total_reward, num_shots, agent_won).
+    Collects placement transitions during placement; at end of episode assigns
+    episode return to each placement step and updates the placement head.
     """
     obs, info = env.reset()
     total_reward = 0.0
@@ -31,11 +33,17 @@ def run_episode(
     prev_obs: np.ndarray | None = None
     prev_action: int | None = None
     prev_mask: np.ndarray | None = None
+    placement_transitions: list[tuple[np.ndarray, int, int]] = []
 
-    # Placement phase
+    # Placement phase: collect (placement_obs, ship_index, action) for each step
     while info.get("phase") == "placement":
+        placement_obs = env.get_placement_observation()
+        ship_index = info.get("ship_index", 0)
         mask = env.get_valid_placement_mask()
-        action = agent.select_placement_action(mask, deterministic=not train)
+        action = agent.select_placement_action(
+            placement_obs, ship_index, mask, deterministic=not train
+        )
+        placement_transitions.append((placement_obs.copy(), ship_index, action))
         obs, reward, term, trunc, info = env.step(action)
         total_reward += reward
 
@@ -61,6 +69,15 @@ def run_episode(
                 prev_obs, prev_action, reward, obs, term or trunc, next_mask
             )
             agent.update()
+
+    # Placement learning: assign episode return to each placement step (Monte Carlo)
+    if train and placement_transitions:
+        for placement_obs, ship_index, action in placement_transitions:
+            agent.store_placement_transition(
+                placement_obs, ship_index, action, total_reward
+            )
+        for _ in range(len(placement_transitions)):
+            agent.update_placement()
 
     return total_reward, num_shots, bool(info.get("agent_won", False))
 
