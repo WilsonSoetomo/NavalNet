@@ -223,3 +223,43 @@ class BattleshipEnv(gym.Env):
                 if not self._game.opponent_board.is_shot(r, c):
                     mask[r * GRID_SIZE + c] = True
         return mask
+
+    def get_full_board_state(self) -> dict:
+        """
+        Return full board state for visualization.
+        Returns dict with raw grid data for both boards + ship positions.
+        """
+        from .game_engine import CellState
+
+        def grid_to_array(board) -> np.ndarray:
+            """Convert board grid to numpy array with cell states."""
+            arr = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.int8)
+            for r in range(GRID_SIZE):
+                for c in range(GRID_SIZE):
+                    arr[r, c] = int(board._grid[r][c])
+            return arr
+
+        def ships_to_list(board) -> list[dict]:
+            return [
+                {
+                    "length": s.length,
+                    "row": s.row,
+                    "col": s.col,
+                    "orientation": s.orientation,
+                    "hits": s.hits,
+                    "sunk": s.is_sunk,
+                }
+                for s in board._ships
+            ]
+
+        return {
+            "agent_grid": grid_to_array(self._game.agent_board),
+            "opponent_grid": grid_to_array(self._game.opponent_board),
+            "agent_ships": ships_to_list(self._game.agent_board),
+            "opponent_ships": ships_to_list(self._game.opponent_board),
+            "phase": self._game.phase,
+            "turn": self._game.turn,
+            "agent_won": self._game.agent_won(),
+            "opponent_won": self._game.opponent_won(),
+            "total_turns": self._total_turns,
+        }

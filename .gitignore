@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Model checkpoints
+models/**/*.pt
+models/*.pt
+
+# TensorBoard runs
+runs/
+
+# Logs (SLURM output)
+logs/*.out
+logs/*.err
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+*~

@@ -1,6 +1,6 @@
 """
-Train DQN agent for Battleship.
-Usage: python train_dqn.py [--episodes N] [--save-path PATH] [--seed N]
+Train PPO agent for Battleship.
+Usage: python train_ppo.py [--episodes N] [--save-path PATH] [--seed N]
 """
 
 import argparse
@@ -17,14 +17,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 from battleship import BattleshipEnv
 from battleship.opponents import RandomOpponent
 from battleship.board_renderer import render_game_boards, figure_to_numpy
-from agents import DQNAgent
+from agents import PPOAgent
 
 
 def run_episode(
     env: BattleshipEnv,
-    agent: DQNAgent,
+    agent: PPOAgent,
     train: bool = True,
-    update_every: int = 4,
     verbose: bool = False,
 ) -> tuple[float, int, bool, dict]:
     """
@@ -34,12 +33,6 @@ def run_episode(
     obs, info = env.reset()
     total_reward = 0.0
     num_shots = 0
-    prev_obs: np.ndarray | None = None
-    prev_action: int | None = None
-    prev_mask: np.ndarray | None = None
-    placement_transitions: list[tuple[np.ndarray, int, int]] = []
-    shooting_losses: list[float] = []
-    placement_losses: list[float] = []
 
     # ── Placement phase ──────────────────────────────────────────────
     placement_steps = 0
@@ -54,10 +47,24 @@ def run_episode(
         if mask.sum() == 0:
             print(f"WARNING: No valid placement actions at ship_index {ship_index}", flush=True)
             break
-        action = agent.select_placement_action(
+
+        action, log_prob = agent.select_placement_action(
             placement_obs, ship_index, mask, deterministic=not train
         )
-        placement_transitions.append((placement_obs.copy(), ship_index, action))
+
+        agent.placement_actor_critic.eval()
+        with torch.no_grad():
+            x = torch.tensor(placement_obs, dtype=torch.float32, device=agent.device).unsqueeze(0)
+            si = torch.tensor([ship_index], dtype=torch.long, device=agent.device)
+            _, value = agent.placement_actor_critic(x, si)
+            value = value.item()
+        agent.placement_actor_critic.train()
+
+        if train:
+            agent.store_placement_transition(
+                placement_obs, ship_index, action, 0.0, log_prob, value
+            )
+
         obs, reward, term, trunc, info = env.step(action)
         total_reward += reward
         placement_steps += 1
@@ -76,10 +83,16 @@ def run_episode(
         if mask.sum() == 0:
             break
 
-        action = agent.select_shooting_action(obs, mask, deterministic=not train)
+        action, log_prob = agent.select_shooting_action(obs, mask, deterministic=not train)
+
+        agent.shooting_actor_critic.eval()
+        with torch.no_grad():
+            x = torch.tensor(obs, dtype=torch.float32, device=agent.device)
+            _, value = agent.shooting_actor_critic(x)
+            value = value.item()
+        agent.shooting_actor_critic.train()
+
         prev_obs = obs.copy()
-        prev_action = action
-        prev_mask = mask.copy()
 
         obs, reward, term, trunc, info = env.step(action)
         total_reward += reward
@@ -89,38 +102,28 @@ def run_episode(
         if verbose and shooting_steps % 20 == 0:
             print(f"    Shot {shooting_steps}: reward={reward:.2f}, total={total_reward:.2f}", flush=True)
 
-        if train and prev_obs is not None and prev_action is not None:
-            next_mask = env.get_valid_shooting_mask()
-            agent.store_transition(
-                prev_obs, prev_action, reward, obs, term or trunc, next_mask
+        if train:
+            agent.store_shooting_transition(
+                prev_obs, action, reward, obs, term or trunc, log_prob, value
             )
-            if shooting_steps % update_every == 0:
-                loss = agent.update()
-                if loss is not None:
-                    shooting_losses.append(loss)
 
     if verbose:
         print(f"  Shooting done in {shooting_steps} shots, won={info.get('agent_won', False)}", flush=True)
 
-    # ── Placement learning (Monte Carlo) ─────────────────────────────
-    if train and placement_transitions:
-        for p_obs, s_idx, act in placement_transitions:
-            agent.store_placement_transition(p_obs, s_idx, act, total_reward)
-        for _ in range(len(placement_transitions)):
-            loss = agent.update_placement()
-            if loss is not None:
-                placement_losses.append(loss)
+    # ── Update policies (on-policy: end of episode) ──────────────────
+    placement_stats: dict = {}
+    shooting_stats: dict = {}
+    if train:
+        placement_stats = agent.update_placement(total_reward)
+        shooting_stats = agent.update_shooting()
 
-    stats = {
-        "shooting_loss": float(np.mean(shooting_losses)) if shooting_losses else 0.0,
-        "placement_loss": float(np.mean(placement_losses)) if placement_losses else 0.0,
-    }
+    stats = {**placement_stats, **shooting_stats}
     return total_reward, num_shots, bool(info.get("agent_won", False)), stats
 
 
 def run_showcase_game(
     env: BattleshipEnv,
-    agent: DQNAgent,
+    agent: PPOAgent,
     writer: SummaryWriter,
     episode: int,
 ) -> None:
@@ -141,7 +144,7 @@ def run_showcase_game(
         mask = env.get_valid_placement_mask()
         if mask.sum() == 0:
             break
-        action = agent.select_placement_action(
+        action, _ = agent.select_placement_action(
             placement_obs, ship_index, mask, deterministic=True
         )
         obs, _, _, _, info = env.step(action)
@@ -164,7 +167,7 @@ def run_showcase_game(
         if mask.sum() == 0:
             break
 
-        action = agent.select_shooting_action(obs, mask, deterministic=True)
+        action, _ = agent.select_shooting_action(obs, mask, deterministic=True)
         obs, _, term, trunc, info = env.step(action)
         shot_num += 1
 
@@ -187,33 +190,31 @@ def run_showcase_game(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train DQN on Battleship")
+    parser = argparse.ArgumentParser(description="Train PPO on Battleship")
     parser.add_argument("--episodes", type=int, default=2000)
-    parser.add_argument("--save-path", type=str, default="models/dqn.pt")
+    parser.add_argument("--save-path", type=str, default="models/ppo.pt")
     parser.add_argument("--save-every", type=int, default=500)
     parser.add_argument("--eval-every", type=int, default=100)
     parser.add_argument("--eval-games", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--update-every", type=int, default=4,
-                        help="DQN gradient update every N shooting steps (default 4)")
     parser.add_argument("--verbose", action="store_true",
                         help="Print per-shot progress within episodes")
-    parser.add_argument("--logdir", type=str, default="runs/dqn",
+    parser.add_argument("--logdir", type=str, default="runs/ppo",
                         help="TensorBoard log directory")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     env = BattleshipEnv(opponent=RandomOpponent(), seed=args.seed)
-    agent = DQNAgent(
-        lr=1e-4,
+    agent = PPOAgent(
+        lr=3e-4,
         gamma=0.99,
-        epsilon_start=1.0,
-        epsilon_end=0.05,
-        epsilon_decay=0.9995,
-        buffer_size=50_000,
-        batch_size=64,
-        target_update_freq=500,
+        gae_lambda=0.95,
+        clip_epsilon=0.2,
+        value_coef=0.5,
+        entropy_coef=0.01,
+        max_grad_norm=0.5,
+        update_epochs=4,
         seed=args.seed,
     )
 
@@ -227,11 +228,10 @@ def main():
     rewards_history: list[float] = []
     win_history: list[int] = []
 
-    print(f"Training DQN for {args.episodes} episodes...", flush=True)
+    print(f"Training PPO for {args.episodes} episodes...", flush=True)
     print(f"  Device: {device}", flush=True)
     print(f"  Opponent: Random", flush=True)
     print(f"  Save path: {args.save_path}", flush=True)
-    print(f"  Update every: {args.update_every} steps", flush=True)
     print("-" * 50, flush=True)
 
     start_time = time.time()
@@ -243,8 +243,7 @@ def main():
         episode_start = time.time()
         ep_verbose = args.verbose or ep == 1
         reward, shots, won, stats = run_episode(
-            env, agent, train=True,
-            update_every=args.update_every, verbose=ep_verbose,
+            env, agent, train=True, verbose=ep_verbose,
         )
         episode_time = time.time() - episode_start
         wins += int(won)
@@ -256,21 +255,20 @@ def main():
         writer.add_scalar("episode/reward", reward, ep)
         writer.add_scalar("episode/shots", shots, ep)
         writer.add_scalar("episode/won", int(won), ep)
-        writer.add_scalar("episode/epsilon", agent.epsilon, ep)
         writer.add_scalar("episode/time_s", episode_time, ep)
-        if stats["shooting_loss"] > 0:
-            writer.add_scalar("loss/shooting", stats["shooting_loss"], ep)
-        if stats["placement_loss"] > 0:
-            writer.add_scalar("loss/placement", stats["placement_loss"], ep)
+        if "policy_loss" in stats:
+            writer.add_scalar("loss/policy", stats["policy_loss"], ep)
+        if "value_loss" in stats:
+            writer.add_scalar("loss/value", stats["value_loss"], ep)
+        if "entropy" in stats:
+            writer.add_scalar("loss/entropy", stats["entropy"], ep)
 
         # Rolling averages
         recent_n = min(100, len(rewards_history))
-        writer.add_scalar("rolling/reward_avg_100", float(np.mean(rewards_history[-recent_n:])), ep)
+        writer.add_scalar("rolling/reward_avg_100",
+                          float(np.mean(rewards_history[-recent_n:])), ep)
         writer.add_scalar("rolling/win_rate_100",
                           float(np.mean(win_history[-recent_n:])), ep)
-        writer.add_scalar("rolling/shots_avg_10",
-                          float(np.mean([rewards_history[-1]])) if len(rewards_history) < 10
-                          else float(np.mean(rewards_history[-10:])), ep)
 
         if ep == 1:
             print(f"Episode 1 complete: {shots} shots, {episode_time:.2f}s, "
@@ -283,7 +281,7 @@ def main():
             eps_per_sec = ep / elapsed if elapsed > 0 else 0
             print(
                 f"Ep {ep:5d} | Shots {shots:3d} | Reward {reward:6.1f} | "
-                f"Win {'Y' if won else 'N'} | eps {agent.epsilon:.3f} | "
+                f"Win {'Y' if won else 'N'} | "
                 f"R_avg {np.mean(recent):.1f} | {eps_per_sec:.1f} ep/s",
                 flush=True,
             )
@@ -292,20 +290,14 @@ def main():
         if ep % args.eval_every == 0:
             eval_wins = 0
             eval_shots_list: list[int] = []
-            old_epsilon = agent.epsilon
-            agent.epsilon = 0.0
 
             last_board_state = None
             for g in range(args.eval_games):
-                _, shots_e, won_e, _ = run_episode(
-                    env, agent, train=False, update_every=args.update_every,
-                )
+                _, shots_e, won_e, _ = run_episode(env, agent, train=False)
                 eval_wins += int(won_e)
                 eval_shots_list.append(shots_e)
                 if g == args.eval_games - 1:
                     last_board_state = env.get_full_board_state()
-
-            agent.epsilon = old_epsilon
 
             eval_wr = 100 * eval_wins / args.eval_games
             eval_avg_shots = float(np.mean(eval_shots_list))
@@ -323,15 +315,12 @@ def main():
                 plt_close(fig)
 
             # Step-by-step replay of one showcase game
-            old_eps2 = agent.epsilon
-            agent.epsilon = 0.0
             run_showcase_game(env, agent, writer, episode=ep)
-            agent.epsilon = old_eps2
 
             recent = rewards_history[-100:]
             print(
                 f"  EVAL  | Win% {eval_wr:5.1f} | AvgShots {eval_avg_shots:5.1f} | "
-                f"eps {agent.epsilon:.3f} | R_avg {np.mean(recent):.1f}",
+                f"R_avg {np.mean(recent):.1f}",
                 flush=True,
             )
 
