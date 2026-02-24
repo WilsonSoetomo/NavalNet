@@ -5,38 +5,10 @@ title:  Home
 
 Source code: https://github.com/WilsonSoetomo/NavalNet
 
+NavalNet is a reinforcement learning based project centered around the board game battleship. Our goal is to create a machine learning agent which can play battleship independently with results comparable or better to random-based strategies.
+
 Reports:
 
 - [Proposal](proposal.html)
 - [Status](status.html)
 - [Final](final.html)
-
-What's Markdown (`.md`)?
-
-Markdown is markup that lets you write hypertext (HTML) documents
-in easy-to-read and easy-to-write plain text.
-No angle brackets `<></>` required for
-paragraphs, lists, blockquotes, tables, etc.
-
-
-This is a paragraph (in Markdown). Some more
-text here.
-
-This is another paragraph.
-
-This is a list:
-
-- Orange
-- Apple
-- Blueberry
-
-$$x^2 = y^2$$
-
-<iframe width="560" height="315" src="https://www.youtube.com/embed/ixDlZp3ciKg" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-
-
-Just getting started with Markdown?
-See the [HTML <-> Markdown Quick Reference (Cheat Sheet)][quickref].
-
-
-[quickref]: https://github.com/mundimark/quickrefs/blob/master/HTML.md
