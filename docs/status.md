@@ -7,6 +7,8 @@ title:  Status
 
 ## Project Overview
 
+<iframe width="560" height="315" src="https://www.youtube.com/embed/ixDlZp3ciKg" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+
 NavalNet is a reinforcement learning project that trains AI agents to play Battleship using Deep Q-Networks (DQN) and Proximal Policy Optimization (PPO). The project aims to develop agents that can learn effective strategies through self-play and outperform baseline heuristic strategies.
 
 ## Completed Components
