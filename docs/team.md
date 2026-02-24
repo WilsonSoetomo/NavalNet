@@ -6,11 +6,11 @@ title:  Team
 # {{ page.title }}
 
 
-## USER 1
+## Wilson Soetomo
 ***UCI Net ID***: wsoetomo
 
-## USER 2
+## Dylan Tanaka
 ***UCI Net ID***: tanakadm
 
-## USER 3
+## Michael Ip
 ***UCI Net ID***: mip1
