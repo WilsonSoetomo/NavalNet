@@ -12,52 +12,52 @@ NavalNet is a reinforcement learning project that trains AI agents to play Battl
 ## Completed Components
 
 ### 1. Game Engine & Environment
-- ✅ **Battleship Game Engine**: Fully implemented game logic with ship placement, shooting mechanics, and win/loss detection
-- ✅ **Gymnasium Environment**: Custom Battleship environment (`BattleshipEnv`) compatible with RL algorithms
-- ✅ **Board State Representation**: Efficient encoding of game state for neural network input
-- ✅ **Opponent Strategies**: Implemented baseline opponents including:
+- **Battleship Game Engine**: Fully implemented game logic with ship placement, shooting mechanics, and win/loss detection
+- **Gymnasium Environment**: Custom Battleship environment (`BattleshipEnv`) compatible with RL algorithms
+- **Board State Representation**: Efficient encoding of game state for neural network input
+- **Opponent Strategies**: Implemented baseline opponents including:
   - Random opponent
   - Hunt and target strategy
   - Checkerboard pattern strategy
 
 ### 2. Reinforcement Learning Agents
-- ✅ **DQN Agent**: Deep Q-Network implementation with:
+- **DQN Agent**: Deep Q-Network implementation with:
   - Experience replay buffer
   - Target network for stable training
   - Epsilon-greedy exploration strategy
   - Configurable hyperparameters (learning rate, epsilon decay, etc.)
-- ✅ **PPO Agent**: Proximal Policy Optimization implementation with:
+- **PPO Agent**: Proximal Policy Optimization implementation with:
   - Actor-critic architecture
   - Generalized Advantage Estimation (GAE)
   - Policy clipping for stable updates
   - Value function and entropy regularization
 
 ### 3. Training Infrastructure
-- ✅ **Training Scripts**: Separate training scripts for DQN and PPO with comprehensive logging
-- ✅ **SLURM Integration**: Batch job scripts for running training on HPC clusters
-- ✅ **TensorBoard Logging**: Real-time visualization of:
+- **Training Scripts**: Separate training scripts for DQN and PPO with comprehensive logging
+- **SLURM Integration**: Batch job scripts for running training on HPC clusters
+- **TensorBoard Logging**: Real-time visualization of:
   - Training metrics (rewards, win rates, average shots)
   - Evaluation metrics
   - Game board visualizations
   - Step-by-step game replays
 
 ### 4. Visualization & Evaluation
-- ✅ **Board Rendering**: Visual representation of game boards for TensorBoard
-- ✅ **Testing Framework**: Scripts to evaluate trained models against baseline strategies
-- ✅ **Performance Metrics**: Tracking of win rates, average shots per game, and other key statistics
+- **Board Rendering**: Visual representation of game boards for TensorBoard
+- **Testing Framework**: Scripts to evaluate trained models against baseline strategies
+- **Performance Metrics**: Tracking of win rates, average shots per game, and other key statistics
 
 ## Current Progress
 
-### Minimum Goal: ✅ Achieved
+### Minimum Goal: Achieved
 The project has successfully created agents that outperform random strategies. Both DQN and PPO agents have been trained and demonstrate learning capabilities.
 
-### Realistic Goal: 🚧 In Progress
-- ✅ Agents can learn from playing against heuristic strategies
-- ✅ Both DQN and PPO implementations are functional
-- 🚧 Ongoing training and hyperparameter tuning
-- 🚧 Performance optimization against various baseline strategies
+### Realistic Goal: In Progress
+- Agents can learn from playing against heuristic strategies
+- Both DQN and PPO implementations are functional
+- Ongoing training and hyperparameter tuning
+- Performance optimization against various baseline strategies
 
-### Moonshot Goal: 📋 Planned
+### Moonshot Goal: Planned
 - Self-play system for continuous improvement
 - Learning optimal ship placement strategies
 - Advanced strategy development through iterative training
