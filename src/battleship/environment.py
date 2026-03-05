@@ -40,6 +40,7 @@ class BattleshipEnv(gym.Env):
         reward_win: float = 100.0,
         reward_lose: float = -100.0,
         reward_per_turn: float = -0.05,
+        reward_efficient_sink: float = 2.0,
         render_mode: str | None = None,
         seed: int | None = None,
     ):
@@ -51,6 +52,7 @@ class BattleshipEnv(gym.Env):
         self.reward_win = reward_win
         self.reward_lose = reward_lose
         self.reward_per_turn = reward_per_turn
+        self.reward_efficient_sink = reward_efficient_sink
         self.render_mode = render_mode
 
         # Observation: 10x10 matrix (0=Unknown, 1=Miss, 2=Hit, 3=Sunk)
@@ -71,6 +73,11 @@ class BattleshipEnv(gym.Env):
         self._rng = np.random.default_rng(seed)
         self._total_turns = 0
 
+        # Shots-to-sink tracking
+        self._agent_shot_attempts = 0
+        self._ship_first_hit_shot: dict[int, int] = {}  # id(ship) -> shot #
+        self._sink_stats: list[dict] = []
+
     def reset(
         self, *, seed: int | None = None, options: dict | None = None
     ) -> tuple[np.ndarray, dict]:
@@ -79,6 +86,9 @@ class BattleshipEnv(gym.Env):
             self._rng = np.random.default_rng(seed)
         self._game.reset()
         self._total_turns = 0
+        self._agent_shot_attempts = 0
+        self._ship_first_hit_shot = {}
+        self._sink_stats = []
 
         # Opponent places ships first
         self.opponent.place_ships(self._game.opponent_board)
@@ -142,6 +152,7 @@ class BattleshipEnv(gym.Env):
         terminated = False
         truncated = False
         info: dict = {}
+        self._agent_shot_attempts += 1
 
         # Agent's turn
         if self._game.turn == "agent":
@@ -154,8 +165,23 @@ class BattleshipEnv(gym.Env):
             hit, sunk = self._game.agent_shoot(row, col)
             if hit:
                 reward += self.reward_hit
+
+                ship = self._game.opponent_board.get_ship_at(row, col)
+                ship_key = id(ship)
+                if ship_key not in self._ship_first_hit_shot:
+                    self._ship_first_hit_shot[ship_key] = self._agent_shot_attempts
+
                 if sunk:
                     reward += self.reward_sink
+                    first_hit = self._ship_first_hit_shot[ship_key]
+                    shots_to_sink = self._agent_shot_attempts - first_hit + 1
+                    efficiency = ship.length / shots_to_sink
+                    reward += self.reward_efficient_sink * efficiency
+                    self._sink_stats.append({
+                        "ship_length": ship.length,
+                        "shots_to_sink": shots_to_sink,
+                        "efficiency": efficiency,
+                    })
             else:
                 reward += self.reward_miss
 
@@ -223,6 +249,15 @@ class BattleshipEnv(gym.Env):
                 if not self._game.opponent_board.is_shot(r, c):
                     mask[r * GRID_SIZE + c] = True
         return mask
+
+    def get_sink_stats(self) -> list[dict]:
+        """
+        Per-ship sink efficiency for this episode.
+        Each entry: {ship_length, shots_to_sink, efficiency}.
+        shots_to_sink = total agent shots from first hit to sinking shot.
+        efficiency   = ship_length / shots_to_sink  (1.0 = perfect focus).
+        """
+        return list(self._sink_stats)
 
     def get_full_board_state(self) -> dict:
         """

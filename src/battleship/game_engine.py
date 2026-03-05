@@ -136,6 +136,10 @@ class Board:
         s = self._grid[row][col]
         return s in (CellState.HIT, CellState.MISS, CellState.SUNK)
 
+    def get_ship_at(self, row: int, col: int) -> Ship | None:
+        """Return the Ship occupying (row, col), or None."""
+        return self._ship_at.get((row, col))
+
     def all_ships_sunk(self) -> bool:
         return all(s.is_sunk for s in self._ships)
 

@@ -15,9 +15,14 @@ from torch.utils.tensorboard import SummaryWriter
 sys.path.insert(0, str(Path(__file__).parent))
 
 from battleship import BattleshipEnv
-from battleship.opponents import RandomOpponent
+from battleship.opponents import HuntTargetOpponent, RandomOpponent
 from battleship.board_renderer import render_game_boards, figure_to_numpy
 from agents import PPOAgent
+
+OPPONENTS = {
+    "random": RandomOpponent,
+    "hunt_target": HuntTargetOpponent,
+}
 
 
 def run_episode(
@@ -117,7 +122,16 @@ def run_episode(
         placement_stats = agent.update_placement(total_reward)
         shooting_stats = agent.update_shooting()
 
-    stats = {**placement_stats, **shooting_stats}
+    sink_stats = env.get_sink_stats()
+    avg_sts = float(np.mean([s["shots_to_sink"] for s in sink_stats])) if sink_stats else 0.0
+    avg_eff = float(np.mean([s["efficiency"] for s in sink_stats])) if sink_stats else 0.0
+    stats = {
+        **placement_stats,
+        **shooting_stats,
+        "avg_shots_to_sink": avg_sts,
+        "avg_sink_efficiency": avg_eff,
+        "ships_sunk": len(sink_stats),
+    }
     return total_reward, num_shots, bool(info.get("agent_won", False)), stats
 
 
@@ -199,13 +213,16 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--verbose", action="store_true",
                         help="Print per-shot progress within episodes")
+    parser.add_argument("--opponent", type=str, default="random",
+                        choices=list(OPPONENTS.keys()),
+                        help="Opponent type (default: random)")
     parser.add_argument("--logdir", type=str, default="runs/ppo",
                         help="TensorBoard log directory")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    env = BattleshipEnv(opponent=RandomOpponent(), seed=args.seed)
+    opponent = OPPONENTS[args.opponent]()
+    env = BattleshipEnv(opponent=opponent, seed=args.seed)
     agent = PPOAgent(
         lr=3e-4,
         gamma=0.99,
@@ -230,7 +247,7 @@ def main():
 
     print(f"Training PPO for {args.episodes} episodes...", flush=True)
     print(f"  Device: {device}", flush=True)
-    print(f"  Opponent: Random", flush=True)
+    print(f"  Opponent: {args.opponent}", flush=True)
     print(f"  Save path: {args.save_path}", flush=True)
     print("-" * 50, flush=True)
 
@@ -262,6 +279,10 @@ def main():
             writer.add_scalar("loss/value", stats["value_loss"], ep)
         if "entropy" in stats:
             writer.add_scalar("loss/entropy", stats["entropy"], ep)
+        if stats["avg_shots_to_sink"] > 0:
+            writer.add_scalar("episode/avg_shots_to_sink", stats["avg_shots_to_sink"], ep)
+            writer.add_scalar("episode/sink_efficiency", stats["avg_sink_efficiency"], ep)
+        writer.add_scalar("episode/ships_sunk", stats["ships_sunk"], ep)
 
         # Rolling averages
         recent_n = min(100, len(rewards_history))

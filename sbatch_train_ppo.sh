@@ -17,7 +17,7 @@ source /opt/apps/anaconda/2024.06/etc/profile.d/conda.sh
 conda activate rl
 
 # ── Run name: ppo_MMDDYYYY_HHMM_<opponent> ──────────────────────
-OPPONENT="random"
+OPPONENT="hunt_target"
 RUN_NAME="ppo_$(date +%m%d%Y_%H%M)_${OPPONENT}"
 
 # Print job info
@@ -34,6 +34,7 @@ cd /data/class/cs175/mip1/NavalNet
 # Run training
 python src/train_ppo.py \
     --episodes 10000 \
+    --opponent "$OPPONENT" \
     --save-path "models/${RUN_NAME}.pt" \
     --save-every 500 \
     --eval-every 100 \

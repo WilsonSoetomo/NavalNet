@@ -13,7 +13,7 @@ from .constants import (
 )
 from .environment import BattleshipEnv
 from .game_engine import BattleshipGame, Board, Ship
-from .opponents import Opponent, RandomOpponent
+from .opponents import HuntTargetOpponent, Opponent, RandomOpponent
 
 __all__ = [
     "BattleshipEnv",
@@ -22,6 +22,7 @@ __all__ = [
     "Ship",
     "Opponent",
     "RandomOpponent",
+    "HuntTargetOpponent",
     "CELL_UNKNOWN",
     "CELL_MISS",
     "CELL_HIT",
