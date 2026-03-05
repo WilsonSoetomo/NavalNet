@@ -9,18 +9,33 @@
 #SBATCH --mem=20GB            ## Allocated Memory
 #SBATCH --cpus-per-task=8     ## Number of CPU cores
 
-# Create logs directory if it doesn't exist
 mkdir -p logs
 
-# Activate conda environment
 source /opt/apps/anaconda/2024.06/etc/profile.d/conda.sh
 conda activate rl
 
-# ── Run name: dqn_MMDDYYYY_HHMM_<opponent> ──────────────────────
-OPPONENT="hunt_target"
-RUN_NAME="dqn_$(date +%m%d%Y_%H%M)_${OPPONENT}"
+# ── Configuration ────────────────────────────────────────────────
+# Options: "random", "hunt_target", "curriculum"
+OPPONENT="curriculum"
 
-# Print job info
+# Pre-trained model to load (empty string = train from scratch)
+LOAD_MODEL="models/dqn_02232026_1307_random.pt"
+
+# Reward tuning (lower win/lose to let hit/sink signal through)
+REWARD_WIN=50.0
+REWARD_LOSE=-50.0
+REWARD_HIT=2.0
+REWARD_SINK=10.0
+REWARD_EFFICIENT_SINK=3.0
+
+# Curriculum settings (only used when OPPONENT=curriculum)
+CURRICULUM_START=0.0
+CURRICULUM_END=0.8
+CURRICULUM_RAMP=7000
+
+RUN_NAME="dqn_$(date +%m%d%Y_%H%M)_${OPPONENT}"
+# ─────────────────────────────────────────────────────────────────
+
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"
 echo "Run name: $RUN_NAME"
@@ -28,13 +43,26 @@ echo "Start time: $(date)"
 echo "Working directory: $(pwd)"
 echo "CUDA available: $(python -c 'import torch; print(torch.cuda.is_available())')"
 
-# Change to project directory
 cd /data/class/cs175/mip1/NavalNet
 
-# Run training
+LOAD_ARG=""
+if [ -n "$LOAD_MODEL" ] && [ -f "$LOAD_MODEL" ]; then
+    LOAD_ARG="--load-model $LOAD_MODEL"
+    echo "Loading model from: $LOAD_MODEL"
+fi
+
 python src/train_dqn.py \
     --episodes 10000 \
     --opponent "$OPPONENT" \
+    $LOAD_ARG \
+    --curriculum-start "$CURRICULUM_START" \
+    --curriculum-end "$CURRICULUM_END" \
+    --curriculum-ramp "$CURRICULUM_RAMP" \
+    --reward-win "$REWARD_WIN" \
+    --reward-lose "$REWARD_LOSE" \
+    --reward-hit "$REWARD_HIT" \
+    --reward-sink "$REWARD_SINK" \
+    --reward-efficient-sink "$REWARD_EFFICIENT_SINK" \
     --save-path "models/${RUN_NAME}.pt" \
     --save-every 500 \
     --eval-every 100 \

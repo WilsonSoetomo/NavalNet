@@ -164,3 +164,50 @@ class HuntTargetOpponent:
         top = max(1, len(pool) // 3)
         cell = random.choice(pool[:top]) if random.random() < 0.6 else random.choice(pool)
         return cell[0] * GRID_SIZE + cell[1]
+
+
+class CurriculumOpponent:
+    """
+    Mixes two opponents with a difficulty ramp.
+    At episode 0 the hard opponent is used `start_hard_ratio` of the time;
+    by `ramp_episodes` it is used `end_hard_ratio` of the time.
+    Call `set_episode(ep)` before each env.reset().
+    """
+
+    def __init__(
+        self,
+        easy: RandomOpponent | None = None,
+        hard: HuntTargetOpponent | None = None,
+        start_hard_ratio: float = 0.0,
+        end_hard_ratio: float = 0.8,
+        ramp_episodes: int = 5000,
+    ):
+        self._easy = easy or RandomOpponent()
+        self._hard = hard or HuntTargetOpponent()
+        self._start = start_hard_ratio
+        self._end = end_hard_ratio
+        self._ramp = ramp_episodes
+        self._episode = 0
+        self._active: RandomOpponent | HuntTargetOpponent = self._easy
+
+    def set_episode(self, ep: int) -> None:
+        """Call before each episode to roll the difficulty dice."""
+        self._episode = ep
+        progress = min(1.0, ep / max(1, self._ramp))
+        hard_ratio = self._start + (self._end - self._start) * progress
+        self._active = self._hard if random.random() < hard_ratio else self._easy
+
+    @property
+    def hard_ratio(self) -> float:
+        progress = min(1.0, self._episode / max(1, self._ramp))
+        return self._start + (self._end - self._start) * progress
+
+    @property
+    def is_hard(self) -> bool:
+        return self._active is self._hard
+
+    def place_ships(self, board: Board) -> None:
+        self._active.place_ships(board)
+
+    def get_shot(self, observation: list[list[int]]) -> int:
+        return self._active.get_shot(observation)

@@ -15,13 +15,14 @@ from torch.utils.tensorboard import SummaryWriter
 sys.path.insert(0, str(Path(__file__).parent))
 
 from battleship import BattleshipEnv
-from battleship.opponents import HuntTargetOpponent, RandomOpponent
+from battleship.opponents import CurriculumOpponent, HuntTargetOpponent, RandomOpponent
 from battleship.board_renderer import render_game_boards, figure_to_numpy
 from agents import DQNAgent
 
 OPPONENTS = {
     "random": RandomOpponent,
     "hunt_target": HuntTargetOpponent,
+    "curriculum": None,  # built separately
 }
 
 
@@ -209,27 +210,67 @@ def main():
                         help="DQN gradient update every N shooting steps (default 4)")
     parser.add_argument("--verbose", action="store_true",
                         help="Print per-shot progress within episodes")
+    parser.add_argument("--load-model", type=str, default=None,
+                        help="Path to pre-trained model to resume from")
     parser.add_argument("--opponent", type=str, default="random",
                         choices=list(OPPONENTS.keys()),
                         help="Opponent type (default: random)")
+    parser.add_argument("--curriculum-start", type=float, default=0.0,
+                        help="Starting hard-opponent ratio for curriculum (default 0.0)")
+    parser.add_argument("--curriculum-end", type=float, default=0.8,
+                        help="Ending hard-opponent ratio for curriculum (default 0.8)")
+    parser.add_argument("--curriculum-ramp", type=int, default=5000,
+                        help="Episodes over which to ramp curriculum difficulty")
+    parser.add_argument("--reward-win", type=float, default=100.0)
+    parser.add_argument("--reward-lose", type=float, default=-100.0)
+    parser.add_argument("--reward-hit", type=float, default=1.0)
+    parser.add_argument("--reward-sink", type=float, default=5.0)
+    parser.add_argument("--reward-miss", type=float, default=-0.1)
+    parser.add_argument("--reward-efficient-sink", type=float, default=2.0)
     parser.add_argument("--logdir", type=str, default="runs/dqn",
                         help="TensorBoard log directory")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    opponent = OPPONENTS[args.opponent]()
-    env = BattleshipEnv(opponent=opponent, seed=args.seed)
+
+    # ── Opponent setup ───────────────────────────────────────────────
+    if args.opponent == "curriculum":
+        opponent = CurriculumOpponent(
+            easy=RandomOpponent(),
+            hard=HuntTargetOpponent(),
+            start_hard_ratio=args.curriculum_start,
+            end_hard_ratio=args.curriculum_end,
+            ramp_episodes=args.curriculum_ramp,
+        )
+    else:
+        opponent = OPPONENTS[args.opponent]()
+
+    env = BattleshipEnv(
+        opponent=opponent,
+        reward_hit=args.reward_hit,
+        reward_sink=args.reward_sink,
+        reward_miss=args.reward_miss,
+        reward_win=args.reward_win,
+        reward_lose=args.reward_lose,
+        reward_efficient_sink=args.reward_efficient_sink,
+        seed=args.seed,
+    )
+
     agent = DQNAgent(
         lr=1e-4,
         gamma=0.99,
-        epsilon_start=1.0,
+        epsilon_start=1.0 if args.load_model is None else 0.3,
         epsilon_end=0.05,
-        epsilon_decay=0.9995,
+        epsilon_decay=0.9995 if args.load_model is None else 0.9999,
         buffer_size=50_000,
         batch_size=64,
         target_update_freq=500,
         seed=args.seed,
     )
+
+    if args.load_model:
+        agent.load(args.load_model)
+        print(f"Loaded pre-trained model from {args.load_model}", flush=True)
 
     # ── TensorBoard ──────────────────────────────────────────────────
     writer = SummaryWriter(log_dir=args.logdir)
@@ -244,6 +285,11 @@ def main():
     print(f"Training DQN for {args.episodes} episodes...", flush=True)
     print(f"  Device: {device}", flush=True)
     print(f"  Opponent: {args.opponent}", flush=True)
+    if args.opponent == "curriculum":
+        print(f"  Curriculum: {args.curriculum_start:.0%} -> {args.curriculum_end:.0%} "
+              f"hard over {args.curriculum_ramp} eps", flush=True)
+    print(f"  Rewards: win={args.reward_win} lose={args.reward_lose} "
+          f"hit={args.reward_hit} sink={args.reward_sink} eff_sink={args.reward_efficient_sink}", flush=True)
     print(f"  Save path: {args.save_path}", flush=True)
     print(f"  Update every: {args.update_every} steps", flush=True)
     print("-" * 50, flush=True)
@@ -253,6 +299,9 @@ def main():
     for ep in range(1, args.episodes + 1):
         if ep == 1:
             print("Starting first episode...", flush=True)
+
+        if hasattr(opponent, "set_episode"):
+            opponent.set_episode(ep)
 
         episode_start = time.time()
         ep_verbose = args.verbose or ep == 1
@@ -280,6 +329,8 @@ def main():
             writer.add_scalar("episode/avg_shots_to_sink", stats["avg_shots_to_sink"], ep)
             writer.add_scalar("episode/sink_efficiency", stats["avg_sink_efficiency"], ep)
         writer.add_scalar("episode/ships_sunk", stats["ships_sunk"], ep)
+        if hasattr(opponent, "hard_ratio"):
+            writer.add_scalar("curriculum/hard_ratio", opponent.hard_ratio, ep)
 
         # Rolling averages
         recent_n = min(100, len(rewards_history))
@@ -299,10 +350,13 @@ def main():
             elapsed = time.time() - start_time
             recent = rewards_history[-10:] if len(rewards_history) >= 10 else rewards_history
             eps_per_sec = ep / elapsed if elapsed > 0 else 0
+            cur_tag = ""
+            if hasattr(opponent, "hard_ratio"):
+                cur_tag = f" | hard {opponent.hard_ratio:.0%}"
             print(
                 f"Ep {ep:5d} | Shots {shots:3d} | Reward {reward:6.1f} | "
                 f"Win {'Y' if won else 'N'} | eps {agent.epsilon:.3f} | "
-                f"R_avg {np.mean(recent):.1f} | {eps_per_sec:.1f} ep/s",
+                f"R_avg {np.mean(recent):.1f} | {eps_per_sec:.1f} ep/s{cur_tag}",
                 flush=True,
             )
 
@@ -330,7 +384,6 @@ def main():
             writer.add_scalar("eval/win_rate", eval_wr, ep)
             writer.add_scalar("eval/avg_shots", eval_avg_shots, ep)
 
-            # Log final board image to TensorBoard
             if last_board_state is not None:
                 result_str = "WIN" if last_board_state["agent_won"] else "LOSS"
                 fig = render_game_boards(
@@ -340,7 +393,6 @@ def main():
                 writer.add_image("eval/game_board", img, ep, dataformats="HWC")
                 plt_close(fig)
 
-            # Step-by-step replay of one showcase game
             old_eps2 = agent.epsilon
             agent.epsilon = 0.0
             run_showcase_game(env, agent, writer, episode=ep)
