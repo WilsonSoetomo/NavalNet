@@ -19,6 +19,10 @@ CELL_MISS = 1
 CELL_HIT = 2
 CELL_SUNK = 3
 
+# Observation channels for multi-channel mode
+# 0: unknown, 1: miss, 2: hit (unsunk), 3: sunk, 4: adjacent-to-unsunk-hit
+NUM_OBS_CHANNELS = 5
+
 # Orientation
 HORIZONTAL = 0
 VERTICAL = 1

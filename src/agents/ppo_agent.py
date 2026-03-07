@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from battleship.constants import GRID_SIZE, HORIZONTAL, NUM_CELLS, SHIP_SIZES, VERTICAL
+from battleship.constants import GRID_SIZE, HORIZONTAL, NUM_CELLS, NUM_OBS_CHANNELS, SHIP_SIZES, VERTICAL
 
 # Placement: row*10*2 + col*2 + orient -> 10*10*2 = 200 actions per ship
 PLACEMENT_ACTIONS = GRID_SIZE * GRID_SIZE * 2
@@ -28,17 +28,18 @@ class ActorCriticNetwork(nn.Module):
     Critic: outputs state value V(s)
     """
 
-    def __init__(self, hidden: int = 256):
+    def __init__(self, in_channels: int = NUM_OBS_CHANNELS, hidden: int = 256):
         super().__init__()
-        # Shared feature extractor
+        self.in_channels = in_channels
         self.conv = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels, 64, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Flatten(),
         )
-        # 64 * 10 * 10 = 6400
         self.shared_fc = nn.Sequential(
             nn.Linear(64 * GRID_SIZE * GRID_SIZE, hidden),
             nn.ReLU(),
@@ -46,26 +47,21 @@ class ActorCriticNetwork(nn.Module):
             nn.ReLU(),
         )
 
-        # Actor head: outputs logits for actions
         self.actor = nn.Linear(hidden, NUM_CELLS)
-
-        # Critic head: outputs state value
         self.critic = nn.Linear(hidden, 1)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Returns (action_logits, state_value)
-        """
         if x.dim() == 2:
-            x = x.unsqueeze(0).unsqueeze(0)  # (1, 1, 10, 10)
+            x = x.unsqueeze(0).unsqueeze(0)
         elif x.dim() == 3:
-            x = x.unsqueeze(1)  # (B, 1, 10, 10)
+            if x.shape[0] == self.in_channels:
+                x = x.unsqueeze(0)
+            else:
+                x = x.unsqueeze(1)
         x = x.float()
         features = self.conv(x)
         shared = self.shared_fc(features)
-        action_logits = self.actor(shared)
-        state_value = self.critic(shared)
-        return action_logits, state_value
+        return self.actor(shared), self.critic(shared)
 
 
 class PlacementActorCriticNetwork(nn.Module):

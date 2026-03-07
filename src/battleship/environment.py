@@ -16,6 +16,7 @@ from .constants import (
     GRID_SIZE,
     HORIZONTAL,
     NUM_CELLS,
+    NUM_OBS_CHANNELS,
     SHIP_SIZES,
     VERTICAL,
 )
@@ -55,9 +56,11 @@ class BattleshipEnv(gym.Env):
         self.reward_efficient_sink = reward_efficient_sink
         self.render_mode = render_mode
 
-        # Observation: 10x10 matrix (0=Unknown, 1=Miss, 2=Hit, 3=Sunk)
+        # Observation: (C, 10, 10) multi-channel binary feature planes
         self.observation_space = spaces.Box(
-            low=0, high=4, shape=(GRID_SIZE, GRID_SIZE), dtype=np.int8
+            low=0, high=1,
+            shape=(NUM_OBS_CHANNELS, GRID_SIZE, GRID_SIZE),
+            dtype=np.float32,
         )
 
         # Action: Placement = MultiDiscrete([10, 10, 2]); Shooting = Discrete(100)
@@ -214,8 +217,32 @@ class BattleshipEnv(gym.Env):
             self._game.opponent_shoot(row, col)
 
     def _get_observation(self) -> np.ndarray:
-        matrix = self._game.opponent_board.observation_matrix()
-        return np.array(matrix, dtype=np.int8)
+        """Multi-channel observation: (C, 10, 10) float32 binary planes.
+        Ch0: unknown, Ch1: miss, Ch2: hit (unsunk), Ch3: sunk,
+        Ch4: unshot cells adjacent to any unsunk hit (targeting hint)."""
+        raw = self._game.opponent_board.observation_matrix()
+        obs = np.zeros((NUM_OBS_CHANNELS, GRID_SIZE, GRID_SIZE), dtype=np.float32)
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE):
+                v = raw[r][c]
+                if v == CELL_UNKNOWN:
+                    obs[0, r, c] = 1.0
+                elif v == CELL_MISS:
+                    obs[1, r, c] = 1.0
+                elif v == CELL_HIT:
+                    obs[2, r, c] = 1.0
+                elif v == CELL_SUNK:
+                    obs[3, r, c] = 1.0
+        # Channel 4: unshot neighbours of unsunk hits
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE):
+                if obs[2, r, c] == 1.0:  # unsunk hit
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE:
+                            if obs[0, nr, nc] == 1.0:  # still unknown
+                                obs[4, nr, nc] = 1.0
+        return obs
 
     def get_placement_observation(self) -> np.ndarray:
         """

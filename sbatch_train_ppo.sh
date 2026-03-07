@@ -3,7 +3,7 @@
 #SBATCH --job-name=ppo_battleship
 #SBATCH --output=logs/ppo_%j.out
 #SBATCH --error=logs/ppo_%j.err
-#SBATCH --time=04:00:00       ## Maximum running time of program
+#SBATCH --time=06:00:00       ## Maximum running time of program
 #SBATCH --nodes=1             ## Number of nodes
 #SBATCH --partition=standard  ## Partition name
 #SBATCH --mem=20GB            ## Allocated Memory
@@ -18,24 +18,22 @@ conda activate rl
 # Options: "random", "hunt_target", "curriculum"
 OPPONENT="curriculum"
 
-# Pre-trained model to load (empty string = train from scratch)
-LOAD_MODEL="models/ppo_02182026_1847_random.pt"
+# Pre-trained model (empty = train from scratch)
+# NOTE: old 1-channel models are incompatible with the new 5-channel arch
+LOAD_MODEL=""
 
-# Reward tuning (lower win/lose to let hit/sink signal through)
+# Reward tuning
 REWARD_WIN=50.0
 REWARD_LOSE=-50.0
 REWARD_HIT=2.0
 REWARD_SINK=10.0
 REWARD_EFFICIENT_SINK=3.0
 
-# Curriculum settings (only used when OPPONENT=curriculum)
+# Curriculum: gated mode (ramp only when winning enough)
 CURRICULUM_START=0.0
 CURRICULUM_END=0.8
-# Performance-gated: only ramp up when win rate >= this threshold
-# Set to 0.0 for linear ramp mode
 CURRICULUM_GATE_WR=0.40
-# Linear-mode ramp episodes (ignored when gated)
-CURRICULUM_RAMP=7000
+CURRICULUM_RAMP=10000
 
 RUN_NAME="ppo_$(date +%m%d%Y_%H%M)_${OPPONENT}"
 # ─────────────────────────────────────────────────────────────────
@@ -56,7 +54,7 @@ if [ -n "$LOAD_MODEL" ] && [ -f "$LOAD_MODEL" ]; then
 fi
 
 python src/train_ppo.py \
-    --episodes 10000 \
+    --episodes 20000 \
     --opponent "$OPPONENT" \
     $LOAD_ARG \
     --curriculum-start "$CURRICULUM_START" \
@@ -69,8 +67,8 @@ python src/train_ppo.py \
     --reward-sink "$REWARD_SINK" \
     --reward-efficient-sink "$REWARD_EFFICIENT_SINK" \
     --save-path "models/${RUN_NAME}.pt" \
-    --save-every 500 \
-    --eval-every 100 \
+    --save-every 1000 \
+    --eval-every 200 \
     --eval-games 20 \
     --seed 42 \
     --logdir "runs/${RUN_NAME}"
