@@ -531,12 +531,14 @@ class PPOAgent:
             path,
         )
 
-    def load(self, path: str | Path) -> None:
-        """Load agent state."""
+    def load(self, path: str | Path, resume: bool = True) -> None:
+        """Load model weights. If resume=False, only load network weights
+        (skip optimizer state) for transfer learning."""
         ckpt = torch.load(path, map_location=self.device, weights_only=True)
         self.shooting_actor_critic.load_state_dict(ckpt["shooting_actor_critic"])
-        if "shooting_optimizer" in ckpt:
-            self.shooting_optimizer.load_state_dict(ckpt["shooting_optimizer"])
         self.placement_actor_critic.load_state_dict(ckpt["placement_actor_critic"])
-        if "placement_optimizer" in ckpt:
-            self.placement_optimizer.load_state_dict(ckpt["placement_optimizer"])
+        if resume:
+            if "shooting_optimizer" in ckpt:
+                self.shooting_optimizer.load_state_dict(ckpt["shooting_optimizer"])
+            if "placement_optimizer" in ckpt:
+                self.placement_optimizer.load_state_dict(ckpt["placement_optimizer"])

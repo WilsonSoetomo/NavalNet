@@ -220,7 +220,11 @@ def main():
     parser.add_argument("--curriculum-end", type=float, default=0.8,
                         help="Ending hard-opponent ratio for curriculum (default 0.8)")
     parser.add_argument("--curriculum-ramp", type=int, default=5000,
-                        help="Episodes over which to ramp curriculum difficulty")
+                        help="Episodes over which to ramp curriculum difficulty (linear mode)")
+    parser.add_argument("--curriculum-gate-wr", type=float, default=0.0,
+                        help="Win-rate threshold for gated curriculum (0 = linear mode)")
+    parser.add_argument("--epsilon-start", type=float, default=None,
+                        help="Override epsilon start (default: 1.0 fresh, 0.3 loaded)")
     parser.add_argument("--reward-win", type=float, default=100.0)
     parser.add_argument("--reward-lose", type=float, default=-100.0)
     parser.add_argument("--reward-hit", type=float, default=1.0)
@@ -241,6 +245,7 @@ def main():
             start_hard_ratio=args.curriculum_start,
             end_hard_ratio=args.curriculum_end,
             ramp_episodes=args.curriculum_ramp,
+            gate_wr=args.curriculum_gate_wr,
         )
     else:
         opponent = OPPONENTS[args.opponent]()
@@ -256,12 +261,17 @@ def main():
         seed=args.seed,
     )
 
+    if args.epsilon_start is not None:
+        eps_start = args.epsilon_start
+    else:
+        eps_start = 1.0 if args.load_model is None else 0.4
+
     agent = DQNAgent(
         lr=1e-4,
         gamma=0.99,
-        epsilon_start=1.0 if args.load_model is None else 0.3,
+        epsilon_start=eps_start,
         epsilon_end=0.05,
-        epsilon_decay=0.9995 if args.load_model is None else 0.9999,
+        epsilon_decay=0.9995 if args.load_model is None else 0.9998,
         buffer_size=50_000,
         batch_size=64,
         target_update_freq=500,
@@ -269,8 +279,9 @@ def main():
     )
 
     if args.load_model:
-        agent.load(args.load_model)
-        print(f"Loaded pre-trained model from {args.load_model}", flush=True)
+        agent.load(args.load_model, resume=False)
+        agent.epsilon = eps_start
+        print(f"Loaded weights from {args.load_model} (fresh optimizer, eps={eps_start})", flush=True)
 
     # ── TensorBoard ──────────────────────────────────────────────────
     writer = SummaryWriter(log_dir=args.logdir)
@@ -286,8 +297,12 @@ def main():
     print(f"  Device: {device}", flush=True)
     print(f"  Opponent: {args.opponent}", flush=True)
     if args.opponent == "curriculum":
-        print(f"  Curriculum: {args.curriculum_start:.0%} -> {args.curriculum_end:.0%} "
-              f"hard over {args.curriculum_ramp} eps", flush=True)
+        if args.curriculum_gate_wr > 0:
+            print(f"  Curriculum: gated (wr>={args.curriculum_gate_wr:.0%} to ramp up, "
+                  f"{args.curriculum_start:.0%} -> {args.curriculum_end:.0%})", flush=True)
+        else:
+            print(f"  Curriculum: linear {args.curriculum_start:.0%} -> {args.curriculum_end:.0%} "
+                  f"over {args.curriculum_ramp} eps", flush=True)
     print(f"  Rewards: win={args.reward_win} lose={args.reward_lose} "
           f"hit={args.reward_hit} sink={args.reward_sink} eff_sink={args.reward_efficient_sink}", flush=True)
     print(f"  Save path: {args.save_path}", flush=True)
@@ -314,6 +329,9 @@ def main():
         total_shots += shots
         rewards_history.append(reward)
         win_history.append(int(won))
+
+        if hasattr(opponent, "report_result"):
+            opponent.report_result(won)
 
         # ── TensorBoard scalars (every episode) ─────────────────────
         writer.add_scalar("episode/reward", reward, ep)

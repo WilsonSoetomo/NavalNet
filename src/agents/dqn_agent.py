@@ -358,17 +358,20 @@ class DQNAgent:
             path,
         )
 
-    def load(self, path: str | Path) -> None:
+    def load(self, path: str | Path, resume: bool = True) -> None:
+        """Load model weights. If resume=False, only load network weights
+        (skip optimizer state, epsilon, step counters) for transfer learning."""
         ckpt = torch.load(path, map_location=self.device, weights_only=True)
         self.policy_net.load_state_dict(ckpt["policy_net"])
         self.target_net.load_state_dict(ckpt["target_net"])
-        if "optimizer" in ckpt:
-            self.optimizer.load_state_dict(ckpt["optimizer"])
-        self.epsilon = ckpt.get("epsilon", self.epsilon_end)
-        self._steps = ckpt.get("steps", 0)
         if "placement_policy_net" in ckpt:
             self.placement_policy_net.load_state_dict(ckpt["placement_policy_net"])
             self.placement_target_net.load_state_dict(ckpt["placement_target_net"])
+        if resume:
+            if "optimizer" in ckpt:
+                self.optimizer.load_state_dict(ckpt["optimizer"])
             if "placement_optimizer" in ckpt:
                 self.placement_optimizer.load_state_dict(ckpt["placement_optimizer"])
+            self.epsilon = ckpt.get("epsilon", self.epsilon_end)
+            self._steps = ckpt.get("steps", 0)
             self._placement_steps = ckpt.get("placement_steps", 0)

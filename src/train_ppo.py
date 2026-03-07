@@ -224,7 +224,9 @@ def main():
     parser.add_argument("--curriculum-end", type=float, default=0.8,
                         help="Ending hard-opponent ratio for curriculum (default 0.8)")
     parser.add_argument("--curriculum-ramp", type=int, default=5000,
-                        help="Episodes over which to ramp curriculum difficulty")
+                        help="Episodes over which to ramp curriculum difficulty (linear mode)")
+    parser.add_argument("--curriculum-gate-wr", type=float, default=0.0,
+                        help="Win-rate threshold for gated curriculum (0 = linear mode)")
     parser.add_argument("--reward-win", type=float, default=100.0)
     parser.add_argument("--reward-lose", type=float, default=-100.0)
     parser.add_argument("--reward-hit", type=float, default=1.0)
@@ -245,6 +247,7 @@ def main():
             start_hard_ratio=args.curriculum_start,
             end_hard_ratio=args.curriculum_end,
             ramp_episodes=args.curriculum_ramp,
+            gate_wr=args.curriculum_gate_wr,
         )
     else:
         opponent = OPPONENTS[args.opponent]()
@@ -266,15 +269,15 @@ def main():
         gae_lambda=0.95,
         clip_epsilon=0.2,
         value_coef=0.5,
-        entropy_coef=0.01,
+        entropy_coef=0.02 if args.load_model else 0.01,
         max_grad_norm=0.5,
         update_epochs=4,
         seed=args.seed,
     )
 
     if args.load_model:
-        agent.load(args.load_model)
-        print(f"Loaded pre-trained model from {args.load_model}", flush=True)
+        agent.load(args.load_model, resume=False)
+        print(f"Loaded weights from {args.load_model} (fresh optimizer)", flush=True)
 
     # ── TensorBoard ──────────────────────────────────────────────────
     writer = SummaryWriter(log_dir=args.logdir)
@@ -290,8 +293,12 @@ def main():
     print(f"  Device: {device}", flush=True)
     print(f"  Opponent: {args.opponent}", flush=True)
     if args.opponent == "curriculum":
-        print(f"  Curriculum: {args.curriculum_start:.0%} -> {args.curriculum_end:.0%} "
-              f"hard over {args.curriculum_ramp} eps", flush=True)
+        if args.curriculum_gate_wr > 0:
+            print(f"  Curriculum: gated (wr>={args.curriculum_gate_wr:.0%} to ramp up, "
+                  f"{args.curriculum_start:.0%} -> {args.curriculum_end:.0%})", flush=True)
+        else:
+            print(f"  Curriculum: linear {args.curriculum_start:.0%} -> {args.curriculum_end:.0%} "
+                  f"over {args.curriculum_ramp} eps", flush=True)
     print(f"  Rewards: win={args.reward_win} lose={args.reward_lose} "
           f"hit={args.reward_hit} sink={args.reward_sink} eff_sink={args.reward_efficient_sink}", flush=True)
     print(f"  Save path: {args.save_path}", flush=True)
@@ -316,6 +323,9 @@ def main():
         total_shots += shots
         rewards_history.append(reward)
         win_history.append(int(won))
+
+        if hasattr(opponent, "report_result"):
+            opponent.report_result(won)
 
         # ── TensorBoard scalars (every episode) ─────────────────────
         writer.add_scalar("episode/reward", reward, ep)

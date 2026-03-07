@@ -168,10 +168,17 @@ class HuntTargetOpponent:
 
 class CurriculumOpponent:
     """
-    Mixes two opponents with a difficulty ramp.
-    At episode 0 the hard opponent is used `start_hard_ratio` of the time;
-    by `ramp_episodes` it is used `end_hard_ratio` of the time.
-    Call `set_episode(ep)` before each env.reset().
+    Mixes two opponents with adaptive difficulty.
+
+    Two modes controlled by the training loop:
+      - **Linear** (default): call set_episode(ep) -- ramps hard_ratio from
+        start to end over ramp_episodes.
+      - **Performance-gated**: call report_result(won) after each episode.
+        hard_ratio only increases when the rolling win-rate exceeds
+        `gate_wr` and decreases if it drops below `gate_wr * 0.5`.
+
+    Always call roll() (or set_episode()) before each env.reset() to pick
+    the opponent for that game.
     """
 
     def __init__(
@@ -181,6 +188,10 @@ class CurriculumOpponent:
         start_hard_ratio: float = 0.0,
         end_hard_ratio: float = 0.8,
         ramp_episodes: int = 5000,
+        gate_wr: float = 0.0,
+        gate_window: int = 100,
+        gate_step_up: float = 0.02,
+        gate_step_down: float = 0.01,
     ):
         self._easy = easy or RandomOpponent()
         self._hard = hard or HuntTargetOpponent()
@@ -190,17 +201,47 @@ class CurriculumOpponent:
         self._episode = 0
         self._active: RandomOpponent | HuntTargetOpponent = self._easy
 
+        self._gate_wr = gate_wr
+        self._gate_window = gate_window
+        self._gate_step_up = gate_step_up
+        self._gate_step_down = gate_step_down
+        self._gated = gate_wr > 0.0
+        self._current_ratio = start_hard_ratio
+        self._win_history: list[int] = []
+
     def set_episode(self, ep: int) -> None:
-        """Call before each episode to roll the difficulty dice."""
+        """Linear-ramp mode: set episode number and roll opponent."""
         self._episode = ep
-        progress = min(1.0, ep / max(1, self._ramp))
-        hard_ratio = self._start + (self._end - self._start) * progress
-        self._active = self._hard if random.random() < hard_ratio else self._easy
+        if not self._gated:
+            progress = min(1.0, ep / max(1, self._ramp))
+            self._current_ratio = self._start + (self._end - self._start) * progress
+        self._roll()
+
+    def report_result(self, won: bool) -> None:
+        """Performance-gated mode: feed game outcome to adjust difficulty."""
+        if not self._gated:
+            return
+        self._win_history.append(int(won))
+        if len(self._win_history) < self._gate_window:
+            return
+        recent_wr = sum(self._win_history[-self._gate_window:]) / self._gate_window
+        if recent_wr >= self._gate_wr:
+            self._current_ratio = min(
+                self._current_ratio + self._gate_step_up, self._end
+            )
+        elif recent_wr < self._gate_wr * 0.5:
+            self._current_ratio = max(
+                self._current_ratio - self._gate_step_down, self._start
+            )
+
+    def _roll(self) -> None:
+        self._active = (
+            self._hard if random.random() < self._current_ratio else self._easy
+        )
 
     @property
     def hard_ratio(self) -> float:
-        progress = min(1.0, self._episode / max(1, self._ramp))
-        return self._start + (self._end - self._start) * progress
+        return self._current_ratio
 
     @property
     def is_hard(self) -> bool:
