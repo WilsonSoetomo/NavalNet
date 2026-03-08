@@ -20,7 +20,7 @@ from .constants import (
     VERTICAL,
 )
 from .game_engine import BattleshipGame
-from .opponents import Opponent, RandomOpponent
+from .opponents import Opponent, RandomOpponent, PlayerTKOpponent
 
 
 class BattleshipEnv(gym.Env):
@@ -72,6 +72,9 @@ class BattleshipEnv(gym.Env):
         self._game = BattleshipGame()
         self._rng = np.random.default_rng(seed)
         self._total_turns = 0
+
+        # Agent last shot, for tkinter player opponent only
+        self._agent_shots = []
 
         # Shots-to-sink tracking
         self._agent_shot_attempts = 0
@@ -163,6 +166,9 @@ class BattleshipEnv(gym.Env):
                 return obs, reward, terminated, truncated, info
 
             hit, sunk = self._game.agent_shoot(row, col)
+
+            self._agent_shots.append((row, col)) # Save shot for player display
+
             if hit:
                 reward += self.reward_hit
 
@@ -209,7 +215,13 @@ class BattleshipEnv(gym.Env):
         """Run opponent shots until they miss (hit grants another turn)."""
         while self._game.turn == "opponent" and not self._game.game_over():
             obs_matrix = self._game.agent_board.observation_matrix()
-            cell = self.opponent.get_shot(obs_matrix)
+            
+            # Player needs to know opponent's last shot for the game board visual
+            if type(self.opponent) is PlayerTKOpponent:
+                cell = self.opponent.get_shot(obs_matrix, self._agent_shots)
+            else:
+                cell = self.opponent.get_shot(obs_matrix)
+
             row, col = cell // GRID_SIZE, cell % GRID_SIZE
             self._game.opponent_shoot(row, col)
 

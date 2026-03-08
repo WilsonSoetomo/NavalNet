@@ -211,3 +211,15 @@ class CurriculumOpponent:
 
     def get_shot(self, observation: list[list[int]]) -> int:
         return self._active.get_shot(observation)
+
+from .playertk import GUIwindow
+
+class PlayerTKOpponent:
+    def __init__(self):
+        self.gui = GUIwindow()
+
+    def place_ships(self, board) -> None:
+        self.gui.phase_placement(board)
+
+    def get_shot(self, observation: list[list[int]], agent_shots: list) -> int:
+        return self.gui.phase_shot(observation, agent_shots)
