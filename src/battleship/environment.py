@@ -37,11 +37,12 @@ class BattleshipEnv(gym.Env):
         opponent: Opponent | None = None,
         reward_hit: float = 1.0,
         reward_sink: float = 5.0,
-        reward_miss: float = -0.1,
+        reward_miss: float = -0.5,
         reward_win: float = 100.0,
         reward_lose: float = -100.0,
         reward_per_turn: float = -0.05,
         reward_efficient_sink: float = 2.0,
+        reward_adjacent_hit: float = 0.3,
         render_mode: str | None = None,
         seed: int | None = None,
     ):
@@ -54,6 +55,7 @@ class BattleshipEnv(gym.Env):
         self.reward_lose = reward_lose
         self.reward_per_turn = reward_per_turn
         self.reward_efficient_sink = reward_efficient_sink
+        self.reward_adjacent_hit = reward_adjacent_hit
         self.render_mode = render_mode
 
         # Observation: (C, 10, 10) multi-channel binary feature planes
@@ -165,6 +167,8 @@ class BattleshipEnv(gym.Env):
                 info = {"phase": "shooting", "repeat_shot": True, "turns": self._total_turns}
                 return obs, reward, terminated, truncated, info
 
+            was_adjacent = self._is_adjacent_to_unsunk_hit(row, col)
+
             hit, sunk = self._game.agent_shoot(row, col)
             if hit:
                 reward += self.reward_hit
@@ -188,6 +192,9 @@ class BattleshipEnv(gym.Env):
             else:
                 reward += self.reward_miss
 
+            if was_adjacent:
+                reward += self.reward_adjacent_hit
+
             if self._game.agent_won():
                 reward += self.reward_win
                 terminated = True
@@ -208,6 +215,16 @@ class BattleshipEnv(gym.Env):
         }
         return obs, reward, terminated, truncated, info
 
+    def _is_adjacent_to_unsunk_hit(self, row: int, col: int) -> bool:
+        """True if (row, col) is next to a cell with an unsunk hit (CELL_HIT)."""
+        raw = self._game.opponent_board.observation_matrix()
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nr, nc = row + dr, col + dc
+            if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE:
+                if raw[nr][nc] == CELL_HIT:
+                    return True
+        return False
+
     def _run_opponent_turn(self) -> None:
         """Run opponent shots until they miss (hit grants another turn)."""
         while self._game.turn == "opponent" and not self._game.game_over():
@@ -217,9 +234,10 @@ class BattleshipEnv(gym.Env):
             self._game.opponent_shoot(row, col)
 
     def _get_observation(self) -> np.ndarray:
-        """Multi-channel observation: (C, 10, 10) float32 binary planes.
+        """Multi-channel observation: (C, 10, 10) float32 planes.
         Ch0: unknown, Ch1: miss, Ch2: hit (unsunk), Ch3: sunk,
-        Ch4: unshot cells adjacent to any unsunk hit (targeting hint)."""
+        Ch4: unshot cells adjacent to any unsunk hit,
+        Ch5: ship probability heatmap (density of valid placements)."""
         raw = self._game.opponent_board.observation_matrix()
         obs = np.zeros((NUM_OBS_CHANNELS, GRID_SIZE, GRID_SIZE), dtype=np.float32)
         for r in range(GRID_SIZE):
@@ -236,13 +254,68 @@ class BattleshipEnv(gym.Env):
         # Channel 4: unshot neighbours of unsunk hits
         for r in range(GRID_SIZE):
             for c in range(GRID_SIZE):
-                if obs[2, r, c] == 1.0:  # unsunk hit
+                if obs[2, r, c] == 1.0:
                     for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                         nr, nc = r + dr, c + dc
                         if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE:
-                            if obs[0, nr, nc] == 1.0:  # still unknown
+                            if obs[0, nr, nc] == 1.0:
                                 obs[4, nr, nc] = 1.0
+        # Channel 5: ship probability heatmap
+        obs[5] = self._compute_ship_probability_map(raw)
         return obs
+
+    def _compute_ship_probability_map(
+        self, raw: list[list[int]]
+    ) -> np.ndarray:
+        """Count valid ship placements per unknown cell, normalised to [0,1].
+
+        For every remaining (unsunk) ship length, enumerate all horizontal and
+        vertical placements whose cells are all UNKNOWN or HIT. Increment the
+        count for each UNKNOWN cell covered.  The result is a 10x10 float32
+        heatmap where brighter = more likely to contain a ship.
+        """
+        remaining = [
+            s.length
+            for s in self._game.opponent_board._ships
+            if not s.is_sunk
+        ]
+        if not remaining:
+            return np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.float32)
+
+        prob = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.float32)
+
+        # Pre-compute cell validity: True if UNKNOWN or HIT (unsunk)
+        ok = np.zeros((GRID_SIZE, GRID_SIZE), dtype=bool)
+        unk = np.zeros((GRID_SIZE, GRID_SIZE), dtype=bool)
+        for r in range(GRID_SIZE):
+            for c in range(GRID_SIZE):
+                v = raw[r][c]
+                if v == CELL_UNKNOWN:
+                    ok[r, c] = True
+                    unk[r, c] = True
+                elif v == CELL_HIT:
+                    ok[r, c] = True
+
+        for ship_len in remaining:
+            # Horizontal placements
+            for r in range(GRID_SIZE):
+                for c in range(GRID_SIZE - ship_len + 1):
+                    if ok[r, c : c + ship_len].all():
+                        for k in range(ship_len):
+                            if unk[r, c + k]:
+                                prob[r, c + k] += 1.0
+            # Vertical placements
+            for c in range(GRID_SIZE):
+                for r in range(GRID_SIZE - ship_len + 1):
+                    if ok[r : r + ship_len, c].all():
+                        for k in range(ship_len):
+                            if unk[r + k, c]:
+                                prob[r + k, c] += 1.0
+
+        mx = prob.max()
+        if mx > 0:
+            prob /= mx
+        return prob
 
     def get_placement_observation(self) -> np.ndarray:
         """

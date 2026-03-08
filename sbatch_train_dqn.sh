@@ -3,7 +3,7 @@
 #SBATCH --job-name=dqn_battleship
 #SBATCH --output=logs/dqn_%j.out
 #SBATCH --error=logs/dqn_%j.err
-#SBATCH --time=06:00:00       ## Maximum running time of program
+#SBATCH --time=24:00:00       ## Maximum running time of program
 #SBATCH --nodes=1             ## Number of nodes
 #SBATCH --partition=standard  ## Partition name
 #SBATCH --mem=20GB            ## Allocated Memory
@@ -19,15 +19,17 @@ conda activate rl
 OPPONENT="curriculum"
 
 # Pre-trained model (empty = train from scratch)
-# NOTE: old 1-channel models are incompatible with the new 5-channel arch
+# NOTE: old models are incompatible with the new 6-channel arch
 LOAD_MODEL=""
 
 # Reward tuning
 REWARD_WIN=50.0
 REWARD_LOSE=-50.0
 REWARD_HIT=2.0
+REWARD_MISS=-0.5
 REWARD_SINK=10.0
 REWARD_EFFICIENT_SINK=3.0
+REWARD_ADJACENT_HIT=0.3
 
 # Curriculum: gated mode (ramp only when winning enough)
 CURRICULUM_START=0.0
@@ -62,7 +64,7 @@ if [ -n "$EPSILON_START" ]; then
 fi
 
 python src/train_dqn.py \
-    --episodes 20000 \
+    --episodes 100000 \
     --opponent "$OPPONENT" \
     $LOAD_ARG \
     $EPS_ARG \
@@ -73,8 +75,10 @@ python src/train_dqn.py \
     --reward-win "$REWARD_WIN" \
     --reward-lose "$REWARD_LOSE" \
     --reward-hit "$REWARD_HIT" \
+    --reward-miss "$REWARD_MISS" \
     --reward-sink "$REWARD_SINK" \
     --reward-efficient-sink "$REWARD_EFFICIENT_SINK" \
+    --reward-adjacent-hit "$REWARD_ADJACENT_HIT" \
     --save-path "models/${RUN_NAME}.pt" \
     --save-every 1000 \
     --eval-every 200 \

@@ -231,8 +231,9 @@ def main():
     parser.add_argument("--reward-lose", type=float, default=-100.0)
     parser.add_argument("--reward-hit", type=float, default=1.0)
     parser.add_argument("--reward-sink", type=float, default=5.0)
-    parser.add_argument("--reward-miss", type=float, default=-0.1)
+    parser.add_argument("--reward-miss", type=float, default=-0.5)
     parser.add_argument("--reward-efficient-sink", type=float, default=2.0)
+    parser.add_argument("--reward-adjacent-hit", type=float, default=0.3)
     parser.add_argument("--logdir", type=str, default="runs/ppo",
                         help="TensorBoard log directory")
     args = parser.parse_args()
@@ -260,6 +261,7 @@ def main():
         reward_win=args.reward_win,
         reward_lose=args.reward_lose,
         reward_efficient_sink=args.reward_efficient_sink,
+        reward_adjacent_hit=args.reward_adjacent_hit,
         seed=args.seed,
     )
 
@@ -299,8 +301,8 @@ def main():
         else:
             print(f"  Curriculum: linear {args.curriculum_start:.0%} -> {args.curriculum_end:.0%} "
                   f"over {args.curriculum_ramp} eps", flush=True)
-    print(f"  Rewards: win={args.reward_win} lose={args.reward_lose} "
-          f"hit={args.reward_hit} sink={args.reward_sink} eff_sink={args.reward_efficient_sink}", flush=True)
+    print(f"  Rewards: win={args.reward_win} lose={args.reward_lose} hit={args.reward_hit} "
+          f"miss={args.reward_miss} sink={args.reward_sink} adj_hit={args.reward_adjacent_hit}", flush=True)
     print(f"  Save path: {args.save_path}", flush=True)
     print("-" * 50, flush=True)
 
