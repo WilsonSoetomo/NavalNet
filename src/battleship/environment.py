@@ -21,7 +21,7 @@ from .constants import (
     VERTICAL,
 )
 from .game_engine import BattleshipGame
-from .opponents import Opponent, RandomOpponent
+from .opponents import HuntTargetOpponent, Opponent, RandomOpponent, _random_place_ships
 
 
 class BattleshipEnv(gym.Env):
@@ -35,6 +35,7 @@ class BattleshipEnv(gym.Env):
     def __init__(
         self,
         opponent: Opponent | None = None,
+        mode: str = "full",
         reward_hit: float = 1.0,
         reward_sink: float = 5.0,
         reward_miss: float = -0.5,
@@ -43,11 +44,20 @@ class BattleshipEnv(gym.Env):
         reward_per_turn: float = -0.05,
         reward_efficient_sink: float = 2.0,
         reward_adjacent_hit: float = 0.3,
+        reward_shots_between_sinks: float = 0.0,
         render_mode: str | None = None,
         seed: int | None = None,
     ):
+        """
+        Args:
+            mode: "full"      – normal game (placement + shooting + opponent fires back)
+                  "shooting"  – agent only shoots, no opponent turn, ships auto-placed
+                  "placement" – agent only places ships, then HuntTarget attacks;
+                                reward = how many shots the attacker needed
+        """
         super().__init__()
         self.opponent = opponent or RandomOpponent()
+        self.mode = mode
         self.reward_hit = reward_hit
         self.reward_sink = reward_sink
         self.reward_miss = reward_miss
@@ -56,6 +66,7 @@ class BattleshipEnv(gym.Env):
         self.reward_per_turn = reward_per_turn
         self.reward_efficient_sink = reward_efficient_sink
         self.reward_adjacent_hit = reward_adjacent_hit
+        self.reward_shots_between_sinks = reward_shots_between_sinks
         self.render_mode = render_mode
 
         # Observation: (C, 10, 10) multi-channel binary feature planes
@@ -82,6 +93,7 @@ class BattleshipEnv(gym.Env):
         self._agent_shot_attempts = 0
         self._ship_first_hit_shot: dict[int, int] = {}  # id(ship) -> shot #
         self._sink_stats: list[dict] = []
+        self._shots_since_last_sink = 0
 
     def reset(
         self, *, seed: int | None = None, options: dict | None = None
@@ -94,9 +106,17 @@ class BattleshipEnv(gym.Env):
         self._agent_shot_attempts = 0
         self._ship_first_hit_shot = {}
         self._sink_stats = []
+        self._shots_since_last_sink = 0
 
         # Opponent places ships first
         self.opponent.place_ships(self._game.opponent_board)
+
+        if self.mode == "shooting":
+            _random_place_ships(self._game.agent_board)
+            self._game.agent_ships_placed = len(SHIP_SIZES)
+            self._game._phase = "shooting"
+            self._game._turn = "agent"
+            return self._get_observation(), {"phase": "shooting"}
 
         obs = self._get_observation()
         info = {
@@ -135,13 +155,28 @@ class BattleshipEnv(gym.Env):
 
         reward = 0.0 if ok else -1.0  # Invalid placement penalty
         ship_index = self._game.agent_ships_placed
-        if ship_index >= len(SHIP_SIZES):
-            self._game._phase = "shooting"
-            self._game._turn = "agent"
-
-        obs = self._get_observation()
         terminated = False
         truncated = False
+
+        if ship_index >= len(SHIP_SIZES):
+            if self.mode == "placement":
+                # Simulate HuntTarget attacking the agent's board.
+                # Reward = total shots needed (higher = better placement).
+                attacker = HuntTargetOpponent()
+                shots = self._simulate_opponent_attack(attacker)
+                reward += float(shots)
+                terminated = True
+                info = {
+                    "phase": "gameover",
+                    "placement_valid": ok,
+                    "attacker_shots": shots,
+                }
+                return self._get_observation(), reward, terminated, truncated, info
+            else:
+                self._game._phase = "shooting"
+                self._game._turn = "agent"
+
+        obs = self._get_observation()
         info = {
             "phase": self._game.phase,
             "ship_index": ship_index,
@@ -170,40 +205,72 @@ class BattleshipEnv(gym.Env):
             was_adjacent = self._is_adjacent_to_unsunk_hit(row, col)
 
             hit, sunk = self._game.agent_shoot(row, col)
-            if hit:
-                reward += self.reward_hit
 
-                ship = self._game.opponent_board.get_ship_at(row, col)
-                ship_key = id(ship)
-                if ship_key not in self._ship_first_hit_shot:
-                    self._ship_first_hit_shot[ship_key] = self._agent_shot_attempts
+            if self.mode == "shooting":
+                # Shooting mode: no win/sink/hit/adjacent rewards; efficiency^2 dominates
+                if hit:
+                    ship = self._game.opponent_board.get_ship_at(row, col)
+                    ship_key = id(ship)
+                    if ship_key not in self._ship_first_hit_shot:
+                        self._ship_first_hit_shot[ship_key] = self._agent_shot_attempts
 
-                if sunk:
-                    reward += self.reward_sink
-                    first_hit = self._ship_first_hit_shot[ship_key]
-                    shots_to_sink = self._agent_shot_attempts - first_hit + 1
-                    efficiency = ship.length / shots_to_sink
-                    reward += self.reward_efficient_sink * efficiency
-                    self._sink_stats.append({
-                        "ship_length": ship.length,
-                        "shots_to_sink": shots_to_sink,
-                        "efficiency": efficiency,
-                    })
+                    if sunk:
+                        first_hit = self._ship_first_hit_shot[ship_key]
+                        shots_to_sink = self._agent_shot_attempts - first_hit + 1
+                        efficiency = ship.length / shots_to_sink
+                        eff_reward = efficiency ** 2  # larger spread
+                        reward += self.reward_efficient_sink * eff_reward
+                        if self.reward_shots_between_sinks > 0:
+                            reward -= self.reward_shots_between_sinks * self._shots_since_last_sink
+                        self._shots_since_last_sink = 0
+                        self._sink_stats.append({
+                            "ship_length": ship.length,
+                            "shots_to_sink": shots_to_sink,
+                            "efficiency": efficiency,
+                        })
+                    else:
+                        self._shots_since_last_sink += 1
+                else:
+                    reward += self.reward_miss
+                    self._shots_since_last_sink += 1
             else:
-                reward += self.reward_miss
+                # Full mode: standard rewards
+                if hit:
+                    reward += self.reward_hit
+                    ship = self._game.opponent_board.get_ship_at(row, col)
+                    ship_key = id(ship)
+                    if ship_key not in self._ship_first_hit_shot:
+                        self._ship_first_hit_shot[ship_key] = self._agent_shot_attempts
 
-            if was_adjacent:
-                reward += self.reward_adjacent_hit
+                    if sunk:
+                        reward += self.reward_sink
+                        first_hit = self._ship_first_hit_shot[ship_key]
+                        shots_to_sink = self._agent_shot_attempts - first_hit + 1
+                        efficiency = ship.length / shots_to_sink
+                        reward += self.reward_efficient_sink * efficiency
+                        self._sink_stats.append({
+                            "ship_length": ship.length,
+                            "shots_to_sink": shots_to_sink,
+                            "efficiency": efficiency,
+                        })
+                else:
+                    reward += self.reward_miss
+
+                if was_adjacent:
+                    reward += self.reward_adjacent_hit
 
             if self._game.agent_won():
-                reward += self.reward_win
+                if self.mode != "shooting":
+                    reward += self.reward_win
                 terminated = True
-            elif not hit:
-                # Opponent's turn
+            elif not hit and self.mode == "full":
                 self._run_opponent_turn()
                 if self._game.opponent_won():
                     reward += self.reward_lose
                     terminated = True
+            elif not hit and self.mode == "shooting":
+                # No opponent turn; just give agent another turn
+                self._game._turn = "agent"
 
         obs = self._get_observation()
         self._total_turns += 1
@@ -232,6 +299,17 @@ class BattleshipEnv(gym.Env):
             cell = self.opponent.get_shot(obs_matrix)
             row, col = cell // GRID_SIZE, cell % GRID_SIZE
             self._game.opponent_shoot(row, col)
+
+    def _simulate_opponent_attack(self, attacker: "Opponent") -> int:
+        """Run *attacker* against agent_board to completion; return total shots."""
+        shots = 0
+        while not self._game.agent_board.all_ships_sunk():
+            obs_matrix = self._game.agent_board.observation_matrix()
+            cell = attacker.get_shot(obs_matrix)
+            row, col = cell // GRID_SIZE, cell % GRID_SIZE
+            self._game.agent_board.shoot(row, col)
+            shots += 1
+        return shots
 
     def _get_observation(self) -> np.ndarray:
         """Multi-channel observation: (C, 10, 10) float32 planes.

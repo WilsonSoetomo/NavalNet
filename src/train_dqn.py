@@ -32,10 +32,15 @@ def run_episode(
     train: bool = True,
     update_every: int = 4,
     verbose: bool = False,
+    train_mode: str = "full",
 ) -> tuple[float, int, bool, dict]:
     """
     Run one episode. Returns (total_reward, num_shots, agent_won, stats).
     stats contains loss values for TensorBoard logging.
+
+    train_mode: "full"      – train both heads in a normal game
+                "shooting"  – shooting head only (no placement, no opponent turn)
+                "placement" – placement head only (reward = attacker shot count)
     """
     obs, info = env.reset()
     total_reward = 0.0
@@ -50,7 +55,9 @@ def run_episode(
     # ── Placement phase ──────────────────────────────────────────────
     placement_steps = 0
     max_placement_steps = 100
-    while info.get("phase") == "placement":
+    skip_placement = (train_mode == "shooting")
+
+    while info.get("phase") == "placement" and not skip_placement:
         if placement_steps >= max_placement_steps:
             print(f"WARNING: Placement exceeded {max_placement_steps} steps", flush=True)
             break
@@ -68,8 +75,31 @@ def run_episode(
         total_reward += reward
         placement_steps += 1
 
+        if term or trunc:
+            break
+
     if verbose:
         print(f"  Placement done in {placement_steps} steps", flush=True)
+
+    # ── Placement-only: episode ends after placement ─────────────────
+    if train_mode == "placement":
+        if train and placement_transitions:
+            for p_obs, s_idx, act in placement_transitions:
+                agent.store_placement_transition(p_obs, s_idx, act, total_reward)
+            for _ in range(len(placement_transitions)):
+                loss = agent.update_placement()
+                if loss is not None:
+                    placement_losses.append(loss)
+        attacker_shots = info.get("attacker_shots", 0)
+        stats = {
+            "shooting_loss": 0.0,
+            "placement_loss": float(np.mean(placement_losses)) if placement_losses else 0.0,
+            "avg_shots_to_sink": 0.0,
+            "avg_sink_efficiency": 0.0,
+            "ships_sunk": 0,
+            "attacker_shots": attacker_shots,
+        }
+        return total_reward, 0, False, stats
 
     # ── Shooting phase ───────────────────────────────────────────────
     max_shooting_steps = 200
@@ -108,8 +138,8 @@ def run_episode(
     if verbose:
         print(f"  Shooting done in {shooting_steps} shots, won={info.get('agent_won', False)}", flush=True)
 
-    # ── Placement learning (Monte Carlo) ─────────────────────────────
-    if train and placement_transitions:
+    # ── Placement learning (Monte Carlo) — skip in shooting-only mode
+    if train and placement_transitions and train_mode == "full":
         for p_obs, s_idx, act in placement_transitions:
             agent.store_placement_transition(p_obs, s_idx, act, total_reward)
         for _ in range(len(placement_transitions)):
@@ -127,6 +157,9 @@ def run_episode(
         "avg_sink_efficiency": avg_eff,
         "ships_sunk": len(sink_stats),
     }
+    # In shooting-only mode, agent always "wins" (sinks all ships), track shots as metric
+    if train_mode == "shooting":
+        return total_reward, num_shots, bool(info.get("agent_won", False)), stats
     return total_reward, num_shots, bool(info.get("agent_won", False)), stats
 
 
@@ -225,6 +258,10 @@ def main():
                         help="Win-rate threshold for gated curriculum (0 = linear mode)")
     parser.add_argument("--epsilon-start", type=float, default=None,
                         help="Override epsilon start (default: 1.0 fresh, 0.3 loaded)")
+    parser.add_argument("--epsilon-end", type=float, default=0.1,
+                        help="Minimum epsilon (default: 0.1 for more exploration)")
+    parser.add_argument("--epsilon-decay", type=float, default=0.99995,
+                        help="Epsilon decay per episode (default: 0.99995, slower decay)")
     parser.add_argument("--reward-win", type=float, default=100.0)
     parser.add_argument("--reward-lose", type=float, default=-100.0)
     parser.add_argument("--reward-hit", type=float, default=1.0)
@@ -232,6 +269,12 @@ def main():
     parser.add_argument("--reward-miss", type=float, default=-0.5)
     parser.add_argument("--reward-efficient-sink", type=float, default=2.0)
     parser.add_argument("--reward-adjacent-hit", type=float, default=0.3)
+    parser.add_argument("--reward-per-turn", type=float, default=-0.05)
+    parser.add_argument("--reward-shots-between-sinks", type=float, default=0.0)
+    parser.add_argument("--train-mode", type=str, default="full",
+                        choices=["full", "shooting", "placement"],
+                        help="Training mode: full (both heads), shooting (only shooting, "
+                             "no opponent turn), placement (only placement, rated by attacker)")
     parser.add_argument("--logdir", type=str, default="runs/dqn",
                         help="TensorBoard log directory")
     args = parser.parse_args()
@@ -253,11 +296,14 @@ def main():
 
     env = BattleshipEnv(
         opponent=opponent,
+        mode=args.train_mode,
         reward_hit=args.reward_hit,
         reward_sink=args.reward_sink,
         reward_miss=args.reward_miss,
         reward_win=args.reward_win,
         reward_lose=args.reward_lose,
+        reward_per_turn=args.reward_per_turn,
+        reward_shots_between_sinks=args.reward_shots_between_sinks,
         reward_efficient_sink=args.reward_efficient_sink,
         reward_adjacent_hit=args.reward_adjacent_hit,
         seed=args.seed,
@@ -272,8 +318,8 @@ def main():
         lr=1e-4,
         gamma=0.99,
         epsilon_start=eps_start,
-        epsilon_end=0.05,
-        epsilon_decay=0.9995 if args.load_model is None else 0.9998,
+        epsilon_end=args.epsilon_end,
+        epsilon_decay=args.epsilon_decay,
         buffer_size=50_000,
         batch_size=64,
         target_update_freq=500,
@@ -305,6 +351,7 @@ def main():
         else:
             print(f"  Curriculum: linear {args.curriculum_start:.0%} -> {args.curriculum_end:.0%} "
                   f"over {args.curriculum_ramp} eps", flush=True)
+    print(f"  Train mode: {args.train_mode}", flush=True)
     print(f"  Rewards: win={args.reward_win} lose={args.reward_lose} hit={args.reward_hit} "
           f"miss={args.reward_miss} sink={args.reward_sink} adj_hit={args.reward_adjacent_hit}", flush=True)
     print(f"  Save path: {args.save_path}", flush=True)
@@ -325,6 +372,7 @@ def main():
         reward, shots, won, stats = run_episode(
             env, agent, train=True,
             update_every=args.update_every, verbose=ep_verbose,
+            train_mode=args.train_mode,
         )
         episode_time = time.time() - episode_start
         wins += int(won)
@@ -349,6 +397,8 @@ def main():
             writer.add_scalar("episode/avg_shots_to_sink", stats["avg_shots_to_sink"], ep)
             writer.add_scalar("episode/sink_efficiency", stats["avg_sink_efficiency"], ep)
         writer.add_scalar("episode/ships_sunk", stats["ships_sunk"], ep)
+        if "attacker_shots" in stats and stats["attacker_shots"] > 0:
+            writer.add_scalar("episode/attacker_shots", stats["attacker_shots"], ep)
         if hasattr(opponent, "hard_ratio"):
             writer.add_scalar("curriculum/hard_ratio", opponent.hard_ratio, ep)
 
@@ -391,6 +441,7 @@ def main():
             for g in range(args.eval_games):
                 _, shots_e, won_e, _ = run_episode(
                     env, agent, train=False, update_every=args.update_every,
+                    train_mode=args.train_mode,
                 )
                 eval_wins += int(won_e)
                 eval_shots_list.append(shots_e)

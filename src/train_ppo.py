@@ -31,10 +31,15 @@ def run_episode(
     agent: PPOAgent,
     train: bool = True,
     verbose: bool = False,
+    train_mode: str = "full",
 ) -> tuple[float, int, bool, dict]:
     """
     Run one episode. Returns (total_reward, num_shots, agent_won, stats).
     stats contains loss values for TensorBoard logging.
+
+    train_mode: "full"      – train both heads in a normal game
+                "shooting"  – shooting head only (no placement, no opponent turn)
+                "placement" – placement head only (reward = attacker shot count)
     """
     obs, info = env.reset()
     total_reward = 0.0
@@ -43,7 +48,9 @@ def run_episode(
     # ── Placement phase ──────────────────────────────────────────────
     placement_steps = 0
     max_placement_steps = 100
-    while info.get("phase") == "placement":
+    skip_placement = (train_mode == "shooting")
+
+    while info.get("phase") == "placement" and not skip_placement:
         if placement_steps >= max_placement_steps:
             print(f"WARNING: Placement exceeded {max_placement_steps} steps", flush=True)
             break
@@ -75,8 +82,27 @@ def run_episode(
         total_reward += reward
         placement_steps += 1
 
+        if term or trunc:
+            break
+
     if verbose:
         print(f"  Placement done in {placement_steps} steps", flush=True)
+
+    # ── Placement-only: episode ends after placement ─────────────────
+    if train_mode == "placement":
+        placement_stats: dict = {}
+        if train:
+            placement_stats = agent.update_placement(total_reward)
+            agent.shooting_trajectory.clear()
+        attacker_shots = info.get("attacker_shots", 0)
+        stats = {
+            **placement_stats,
+            "avg_shots_to_sink": 0.0,
+            "avg_sink_efficiency": 0.0,
+            "ships_sunk": 0,
+            "attacker_shots": attacker_shots,
+        }
+        return total_reward, 0, False, stats
 
     # ── Shooting phase ───────────────────────────────────────────────
     max_shooting_steps = 200
@@ -117,17 +143,20 @@ def run_episode(
         print(f"  Shooting done in {shooting_steps} shots, won={info.get('agent_won', False)}", flush=True)
 
     # ── Update policies (on-policy: end of episode) ──────────────────
-    placement_stats: dict = {}
+    placement_stats2: dict = {}
     shooting_stats: dict = {}
     if train:
-        placement_stats = agent.update_placement(total_reward)
+        if train_mode == "full":
+            placement_stats2 = agent.update_placement(total_reward)
+        else:
+            agent.placement_trajectory.clear()
         shooting_stats = agent.update_shooting()
 
     sink_stats = env.get_sink_stats()
     avg_sts = float(np.mean([s["shots_to_sink"] for s in sink_stats])) if sink_stats else 0.0
     avg_eff = float(np.mean([s["efficiency"] for s in sink_stats])) if sink_stats else 0.0
     stats = {
-        **placement_stats,
+        **placement_stats2,
         **shooting_stats,
         "avg_shots_to_sink": avg_sts,
         "avg_sink_efficiency": avg_eff,
@@ -234,6 +263,16 @@ def main():
     parser.add_argument("--reward-miss", type=float, default=-0.5)
     parser.add_argument("--reward-efficient-sink", type=float, default=2.0)
     parser.add_argument("--reward-adjacent-hit", type=float, default=0.3)
+    parser.add_argument("--reward-per-turn", type=float, default=-0.05)
+    parser.add_argument("--reward-shots-between-sinks", type=float, default=0.0)
+    parser.add_argument("--train-mode", type=str, default="full",
+                        choices=["full", "shooting", "placement"],
+                        help="Training mode: full (both heads), shooting (only shooting, "
+                             "no opponent turn), placement (only placement, rated by attacker)")
+    parser.add_argument("--entropy-coef", type=float, default=0.05,
+                        help="Entropy bonus coefficient (default: 0.05 for shooting mode)")
+    parser.add_argument("--update-epochs", type=int, default=8,
+                        help="PPO update epochs per batch (default: 8)")
     parser.add_argument("--logdir", type=str, default="runs/ppo",
                         help="TensorBoard log directory")
     args = parser.parse_args()
@@ -255,11 +294,14 @@ def main():
 
     env = BattleshipEnv(
         opponent=opponent,
+        mode=args.train_mode,
         reward_hit=args.reward_hit,
         reward_sink=args.reward_sink,
         reward_miss=args.reward_miss,
         reward_win=args.reward_win,
         reward_lose=args.reward_lose,
+        reward_per_turn=args.reward_per_turn,
+        reward_shots_between_sinks=args.reward_shots_between_sinks,
         reward_efficient_sink=args.reward_efficient_sink,
         reward_adjacent_hit=args.reward_adjacent_hit,
         seed=args.seed,
@@ -271,9 +313,9 @@ def main():
         gae_lambda=0.95,
         clip_epsilon=0.2,
         value_coef=0.5,
-        entropy_coef=0.02 if args.load_model else 0.01,
+        entropy_coef=args.entropy_coef,
         max_grad_norm=0.5,
-        update_epochs=4,
+        update_epochs=args.update_epochs,
         seed=args.seed,
     )
 
@@ -301,6 +343,7 @@ def main():
         else:
             print(f"  Curriculum: linear {args.curriculum_start:.0%} -> {args.curriculum_end:.0%} "
                   f"over {args.curriculum_ramp} eps", flush=True)
+    print(f"  Train mode: {args.train_mode}", flush=True)
     print(f"  Rewards: win={args.reward_win} lose={args.reward_lose} hit={args.reward_hit} "
           f"miss={args.reward_miss} sink={args.reward_sink} adj_hit={args.reward_adjacent_hit}", flush=True)
     print(f"  Save path: {args.save_path}", flush=True)
@@ -319,6 +362,7 @@ def main():
         ep_verbose = args.verbose or ep == 1
         reward, shots, won, stats = run_episode(
             env, agent, train=True, verbose=ep_verbose,
+            train_mode=args.train_mode,
         )
         episode_time = time.time() - episode_start
         wins += int(won)
@@ -344,6 +388,8 @@ def main():
             writer.add_scalar("episode/avg_shots_to_sink", stats["avg_shots_to_sink"], ep)
             writer.add_scalar("episode/sink_efficiency", stats["avg_sink_efficiency"], ep)
         writer.add_scalar("episode/ships_sunk", stats["ships_sunk"], ep)
+        if "attacker_shots" in stats and stats["attacker_shots"] > 0:
+            writer.add_scalar("episode/attacker_shots", stats["attacker_shots"], ep)
         if hasattr(opponent, "hard_ratio"):
             writer.add_scalar("curriculum/hard_ratio", opponent.hard_ratio, ep)
 
@@ -380,7 +426,8 @@ def main():
 
             last_board_state = None
             for g in range(args.eval_games):
-                _, shots_e, won_e, _ = run_episode(env, agent, train=False)
+                _, shots_e, won_e, _ = run_episode(env, agent, train=False,
+                                                    train_mode=args.train_mode)
                 eval_wins += int(won_e)
                 eval_shots_list.append(shots_e)
                 if g == args.eval_games - 1:
