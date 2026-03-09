@@ -262,6 +262,8 @@ def main():
                         help="Minimum epsilon (default: 0.1 for more exploration)")
     parser.add_argument("--epsilon-decay", type=float, default=0.99995,
                         help="Epsilon decay per episode (default: 0.99995, slower decay)")
+    parser.add_argument("--buffer-reset-interval", type=int, default=5000,
+                        help="Clear replay buffers every N episodes (0=disabled). Mitigates distribution shift.")
     parser.add_argument("--reward-win", type=float, default=100.0)
     parser.add_argument("--reward-lose", type=float, default=-100.0)
     parser.add_argument("--reward-hit", type=float, default=1.0)
@@ -271,6 +273,8 @@ def main():
     parser.add_argument("--reward-adjacent-hit", type=float, default=0.3)
     parser.add_argument("--reward-per-turn", type=float, default=-0.05)
     parser.add_argument("--reward-shots-between-sinks", type=float, default=0.0)
+    parser.add_argument("--reward-chain", type=float, default=0.0,
+                        help="Per-hit chain bonus for consecutive hits on same ship (default: 0)")
     parser.add_argument("--train-mode", type=str, default="full",
                         choices=["full", "shooting", "placement"],
                         help="Training mode: full (both heads), shooting (only shooting, "
@@ -306,6 +310,7 @@ def main():
         reward_shots_between_sinks=args.reward_shots_between_sinks,
         reward_efficient_sink=args.reward_efficient_sink,
         reward_adjacent_hit=args.reward_adjacent_hit,
+        reward_chain=args.reward_chain,
         seed=args.seed,
     )
 
@@ -356,6 +361,8 @@ def main():
           f"miss={args.reward_miss} sink={args.reward_sink} adj_hit={args.reward_adjacent_hit}", flush=True)
     print(f"  Save path: {args.save_path}", flush=True)
     print(f"  Update every: {args.update_every} steps", flush=True)
+    if args.buffer_reset_interval > 0:
+        print(f"  Buffer reset: every {args.buffer_reset_interval} episodes", flush=True)
     print("-" * 50, flush=True)
 
     start_time = time.time()
@@ -366,6 +373,12 @@ def main():
 
         if hasattr(opponent, "set_episode"):
             opponent.set_episode(ep)
+
+        # Periodic buffer reset to mitigate replay distribution shift
+        if args.buffer_reset_interval > 0 and ep > 0 and ep % args.buffer_reset_interval == 0:
+            agent.replay_buffer.clear()
+            agent.placement_replay_buffer.clear()
+            print(f"  Buffer reset at ep {ep}", flush=True)
 
         episode_start = time.time()
         ep_verbose = args.verbose or ep == 1

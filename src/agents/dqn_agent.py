@@ -121,6 +121,10 @@ class ReplayBuffer:
     def __len__(self) -> int:
         return len(self.buffer)
 
+    def clear(self) -> None:
+        """Clear buffer (e.g. for periodic reset to mitigate distribution shift)."""
+        self.buffer.clear()
+
 
 class PlacementReplayBuffer:
     """Experience replay for placement DQN. Stores (state, ship_index, action, reward)."""
@@ -149,6 +153,10 @@ class PlacementReplayBuffer:
 
     def __len__(self) -> int:
         return len(self.buffer)
+
+    def clear(self) -> None:
+        """Clear buffer (e.g. for periodic reset to mitigate distribution shift)."""
+        self.buffer.clear()
 
 
 class DQNAgent:

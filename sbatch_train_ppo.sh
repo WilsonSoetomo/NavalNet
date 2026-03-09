@@ -43,9 +43,10 @@ CURRICULUM_END=0.8
 CURRICULUM_GATE_WR=0.40
 CURRICULUM_RAMP=10000
 
-# PPO mitigations: higher entropy + more epochs to avoid entropy collapse
-ENTROPY_COEF=0.05
+# PPO mitigations: higher entropy + more epochs + shorter rollouts
+ENTROPY_COEF=0.08
 UPDATE_EPOCHS=8
+ROLLOUT_STEPS=20
 
 RUN_NAME="ppo_$(date +%m%d%Y_%H%M)_${TRAIN_MODE}_${OPPONENT}"
 # ─────────────────────────────────────────────────────────────────
@@ -72,6 +73,7 @@ python src/train_ppo.py \
     $LOAD_ARG \
     --entropy-coef "$ENTROPY_COEF" \
     --update-epochs "$UPDATE_EPOCHS" \
+    --rollout-steps "$ROLLOUT_STEPS" \
     --curriculum-start "$CURRICULUM_START" \
     --curriculum-end "$CURRICULUM_END" \
     --curriculum-ramp "$CURRICULUM_RAMP" \

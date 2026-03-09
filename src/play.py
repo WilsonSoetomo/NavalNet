@@ -40,7 +40,7 @@ GRY = "\033[90m"
 SHIP_NAMES = {5: "Carrier", 4: "Battleship", 3: "Cruiser", 2: "Destroyer"}
 
 
-# ── Build the 6-channel observation any board (for model opponent) ──
+# ── Build the 7-channel observation any board (for model opponent) ──
 def _build_observation(board: Board) -> np.ndarray:
     raw = board.observation_matrix()
     obs = np.zeros((NUM_OBS_CHANNELS, GRID_SIZE, GRID_SIZE), dtype=np.float32)
@@ -93,6 +93,15 @@ def _build_observation(board: Board) -> np.ndarray:
         if mx > 0:
             prob /= mx
         obs[5] = prob
+    # Channel 6: unshot neighbours of most recent hit only
+    last_hit = getattr(board, "_last_hit", None)
+    if last_hit is not None:
+        r, c = last_hit
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE:
+                if obs[0, nr, nc] == 1.0:
+                    obs[6, nr, nc] = 1.0
     return obs
 
 

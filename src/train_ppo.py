@@ -32,6 +32,7 @@ def run_episode(
     train: bool = True,
     verbose: bool = False,
     train_mode: str = "full",
+    rollout_steps: int = 0,
 ) -> tuple[float, int, bool, dict]:
     """
     Run one episode. Returns (total_reward, num_shots, agent_won, stats).
@@ -40,6 +41,7 @@ def run_episode(
     train_mode: "full"      – train both heads in a normal game
                 "shooting"  – shooting head only (no placement, no opponent turn)
                 "placement" – placement head only (reward = attacker shot count)
+    rollout_steps: If > 0, do PPO update every N shooting steps (truncated rollouts).
     """
     obs, info = env.reset()
     total_reward = 0.0
@@ -138,6 +140,9 @@ def run_episode(
             agent.store_shooting_transition(
                 prev_obs, action, reward, obs, term or trunc, log_prob, value
             )
+            # Truncated rollouts: update every N steps for more frequent learning
+            if rollout_steps > 0 and len(agent.shooting_trajectory) >= rollout_steps:
+                agent.update_shooting()
 
     if verbose:
         print(f"  Shooting done in {shooting_steps} shots, won={info.get('agent_won', False)}", flush=True)
@@ -269,10 +274,12 @@ def main():
                         choices=["full", "shooting", "placement"],
                         help="Training mode: full (both heads), shooting (only shooting, "
                              "no opponent turn), placement (only placement, rated by attacker)")
-    parser.add_argument("--entropy-coef", type=float, default=0.05,
-                        help="Entropy bonus coefficient (default: 0.05 for shooting mode)")
+    parser.add_argument("--entropy-coef", type=float, default=0.08,
+                        help="Entropy bonus coefficient (default: 0.08 for shooting mode)")
     parser.add_argument("--update-epochs", type=int, default=8,
                         help="PPO update epochs per batch (default: 8)")
+    parser.add_argument("--rollout-steps", type=int, default=20,
+                        help="Shooting steps per PPO update (0=full episode). Shorter = more frequent updates.")
     parser.add_argument("--logdir", type=str, default="runs/ppo",
                         help="TensorBoard log directory")
     args = parser.parse_args()
@@ -347,6 +354,8 @@ def main():
     print(f"  Rewards: win={args.reward_win} lose={args.reward_lose} hit={args.reward_hit} "
           f"miss={args.reward_miss} sink={args.reward_sink} adj_hit={args.reward_adjacent_hit}", flush=True)
     print(f"  Save path: {args.save_path}", flush=True)
+    if args.rollout_steps > 0:
+        print(f"  Rollout truncation: update every {args.rollout_steps} steps", flush=True)
     print("-" * 50, flush=True)
 
     start_time = time.time()
@@ -362,6 +371,7 @@ def main():
         ep_verbose = args.verbose or ep == 1
         reward, shots, won, stats = run_episode(
             env, agent, train=True, verbose=ep_verbose,
+            rollout_steps=args.rollout_steps,
             train_mode=args.train_mode,
         )
         episode_time = time.time() - episode_start

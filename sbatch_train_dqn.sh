@@ -26,11 +26,11 @@ OPPONENT="curriculum"
 TRAIN_MODE="shooting"
 
 # Pre-trained model (empty = train from scratch)
-# NOTE: old models are incompatible with the new 6-channel arch
+# NOTE: old models are incompatible with the new 7-channel arch
 LOAD_MODEL=""
 
 # Reward tuning — SHOOTING mode (env auto-zeros win/lose/hit/sink/adjacent in shooting mode)
-# Efficiency^2 dominates; shots_between penalizes gaps between sinks.
+# Efficiency^2 dominates; shots_between penalizes gaps between sinks; chain rewards chaining.
 REWARD_WIN=0.0
 REWARD_LOSE=0.0
 REWARD_HIT=0.0
@@ -40,6 +40,7 @@ REWARD_EFFICIENT_SINK=12.0
 REWARD_ADJACENT_HIT=0.0
 REWARD_PER_TURN=-0.15
 REWARD_SHOTS_BETWEEN_SINKS=0.1
+REWARD_CHAIN=0.15
 
 # Curriculum: gated mode (ramp only when winning enough)
 CURRICULUM_START=0.0
@@ -50,8 +51,11 @@ CURRICULUM_RAMP=10000
 # Epsilon: slower decay + higher min to mitigate replay buffer distribution shift
 # Empty EPSILON_START = use defaults (1.0 from scratch, 0.4 from loaded)
 EPSILON_START=""
-EPSILON_END=0.1
-EPSILON_DECAY=0.99995
+EPSILON_END=0.15
+EPSILON_DECAY=0.99998
+
+# Buffer reset: clear replay every N episodes (0=disabled). Mitigates distribution shift.
+BUFFER_RESET_INTERVAL=3000
 
 RUN_NAME="dqn_$(date +%m%d%Y_%H%M)_${TRAIN_MODE}_${OPPONENT}"
 # ─────────────────────────────────────────────────────────────────
@@ -84,6 +88,7 @@ python src/train_dqn.py \
     $EPS_ARG \
     --epsilon-end "$EPSILON_END" \
     --epsilon-decay "$EPSILON_DECAY" \
+    --buffer-reset-interval "$BUFFER_RESET_INTERVAL" \
     --curriculum-start "$CURRICULUM_START" \
     --curriculum-end "$CURRICULUM_END" \
     --curriculum-ramp "$CURRICULUM_RAMP" \
@@ -97,6 +102,7 @@ python src/train_dqn.py \
     --reward-adjacent-hit "$REWARD_ADJACENT_HIT" \
     --reward-per-turn "$REWARD_PER_TURN" \
     --reward-shots-between-sinks "$REWARD_SHOTS_BETWEEN_SINKS" \
+    --reward-chain "$REWARD_CHAIN" \
     --save-path "models/${RUN_NAME}.pt" \
     --save-every 1000 \
     --eval-every 200 \
