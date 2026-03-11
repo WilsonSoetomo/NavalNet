@@ -21,9 +21,8 @@ CELL_SUNK = 3
 
 # Observation channels for multi-channel mode
 # 0: unknown, 1: miss, 2: hit (unsunk), 3: sunk,
-# 4: adjacent-to-unsunk-hit, 5: ship probability heatmap,
-# 6: adjacent-to-most-recent-hit
-NUM_OBS_CHANNELS = 7
+# 4: adjacent-to-unsunk-hit, 5: ship probability heatmap
+NUM_OBS_CHANNELS = 6
 
 # Orientation
 HORIZONTAL = 0

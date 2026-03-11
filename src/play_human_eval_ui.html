@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NavalNet Human Eval</title>
+<style>
+:root {
+  --bg: #0a0e1a;
+  --panel: #111827;
+  --card: #1a2235;
+  --border: #2a3548;
+  --text: #e2e8f0;
+  --text2: #94a3b8;
+  --accent: #06b6d4;
+  --green: #22c55e;
+  --red: #ef4444;
+  --amber: #f59e0b;
+  --muted: #64748b;
+  --water: #172554;
+  --water-h: #1e3a5f;
+  --cell: 44px;
+  --gap: 3px;
+  --rad: 4px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;align-items:center}
+
+header{width:100%;background:var(--panel);border-bottom:1px solid var(--border);
+  padding:14px 24px;display:flex;align-items:center;gap:16px;justify-content:center}
+header h1{font-size:20px;font-weight:700;letter-spacing:.5px}
+header h1 span{color:var(--accent)}
+
+.intro{text-align:center;padding:16px 24px;max-width:560px;font-size:14px;color:var(--text2);line-height:1.6}
+.intro strong{color:var(--text)}
+
+.controls{display:flex;flex-wrap:wrap;gap:10px;padding:12px 24px;align-items:center;justify-content:center}
+.controls button{background:var(--card);color:var(--text);border:1px solid var(--border);
+  padding:10px 20px;border-radius:6px;font-size:14px;cursor:pointer;transition:all .15s}
+.controls button:hover{border-color:var(--accent);background:#1e293b}
+.controls button.primary{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
+.controls button.primary:hover{background:#0891b2}
+.controls button:disabled{opacity:.5;cursor:not-allowed}
+
+.stats{display:flex;gap:24px;padding:12px 24px;font-size:14px;color:var(--text2);justify-content:center;flex-wrap:wrap}
+.stats .stat{display:flex;align-items:center;gap:6px}
+.stats .num{font-weight:700;color:var(--text)}
+.stats .green{color:var(--green)}
+.stats .red{color:var(--red)}
+
+.board-wrap{padding:16px 24px}
+.board-section h3{text-align:center;font-size:14px;font-weight:600;color:var(--text2);
+  margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
+.board-section h3.attack-title{color:var(--red)}
+
+.grid-wrap{position:relative}
+.grid{display:grid;grid-template-columns:28px repeat(10,var(--cell));grid-template-rows:28px repeat(10,var(--cell));gap:var(--gap)}
+.grid .hdr{display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--muted)}
+.grid .corner{grid-row:1;grid-column:1}
+
+.cell{border-radius:var(--rad);display:flex;align-items:center;justify-content:center;
+  font-size:16px;font-weight:700;transition:background .12s,transform .1s,box-shadow .15s;
+  position:relative;user-select:none}
+.cell.unknown{background:var(--water)}
+.cell.hit{background:var(--red);box-shadow:0 0 8px rgba(239,68,68,.4)}
+.cell.miss{background:#334155}
+.cell.miss::after{content:'';width:10px;height:10px;border-radius:50%;background:#64748b}
+.cell.sunk{background:#7f1d1d}
+.cell.sunk::after{content:'\00d7';font-size:22px;color:#fca5a5}
+
+.cell.clickable{cursor:crosshair}
+.cell.clickable:hover{background:var(--water-h);transform:scale(1.06);z-index:2}
+
+.cell.flash-hit{animation:flashHit .4s}
+@keyframes flashHit{0%{transform:scale(1.3);box-shadow:0 0 20px rgba(239,68,68,.8)}100%{transform:scale(1);box-shadow:0 0 8px rgba(239,68,68,.4)}}
+.cell.flash-miss{animation:flashMiss .3s}
+@keyframes flashMiss{0%{transform:scale(1.15)}100%{transform:scale(1)}}
+.cell.flash-sunk{animation:flashSunk .5s}
+@keyframes flashSunk{0%,50%{transform:rotate(-3deg) scale(1.1)}25%,75%{transform:rotate(3deg) scale(1.1)}100%{transform:rotate(0) scale(1)}}
+
+.messages{width:100%;max-width:520px;padding:0 24px}
+.messages h4{font-size:13px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px}
+.msg-list{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+  height:160px;overflow-y:auto;padding:8px 12px;font-size:13px;line-height:1.5;font-family:'Menlo','Consolas',monospace}
+.msg-list .m{color:var(--text2)}
+.msg-list .m.hit-msg{color:var(--red);font-weight:600}
+.msg-list .m.sunk-msg{color:var(--red);font-weight:700}
+
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;
+  justify-content:center;z-index:100}
+.overlay-card{background:var(--panel);border:1px solid var(--border);border-radius:12px;
+  padding:32px 40px;text-align:center;max-width:420px}
+.overlay-card h2{font-size:24px;margin-bottom:12px}
+.overlay-card p{color:var(--text2);margin-bottom:8px;font-size:14px}
+.overlay-card .summary-table{margin:20px 0;text-align:left;font-size:14px}
+.overlay-card .summary-table tr{display:flex;justify-content:space-between;gap:24px;padding:6px 0;border-bottom:1px solid var(--border)}
+.overlay-card .summary-table td:last-child{font-weight:600;color:var(--text)}
+.overlay-card button{padding:12px 28px;font-size:15px;font-weight:600;border-radius:8px;
+  border:none;cursor:pointer;background:var(--accent);color:#000;margin-top:16px}
+.overlay-card button:hover{background:#0891b2}
+.hidden{display:none !important}
+
+.dimmed{opacity:.5;pointer-events:none}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>Naval</span>Net Human Eval</h1>
+</header>
+
+<div class="intro">
+  Same setup as DQN shooting training: opponent places ships randomly, you shoot until all 5 are sunk.
+  No opponent turn. Complete <strong>100 episodes</strong> — metrics recorded per episode.
+</div>
+
+<div class="bot-eval-section" style="padding:16px 24px;border-bottom:1px solid var(--border);width:100%;max-width:640px">
+  <h4 style="font-size:13px;color:var(--muted);margin-bottom:10px;text-transform:uppercase">Bot / Model Eval</h4>
+  <p style="font-size:13px;color:var(--text2);margin-bottom:10px">Run Random, Hunt/Target, or a trained model against randomly placed ships.</p>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+    <label style="font-size:13px;color:var(--text2)">Shooter:</label>
+    <select id="eval-shooter-select" style="background:var(--card);color:var(--text);border:1px solid var(--border);padding:8px 12px;border-radius:6px">
+      <option value="random">Random</option>
+      <option value="hunt_target">Hunt/Target</option>
+      <option value="model">Model (DQN/PPO)</option>
+    </select>
+    <select id="eval-model-select" class="hidden" style="background:var(--card);color:var(--text);border:1px solid var(--border);padding:8px 12px;border-radius:6px;min-width:220px"></select>
+    <label style="font-size:13px;color:var(--text2)">Episodes:</label>
+    <input type="number" id="eval-episodes" value="100" min="1" max="1000" style="width:70px;background:var(--card);color:var(--text);border:1px solid var(--border);padding:8px;border-radius:6px">
+    <button id="btn-run-eval" style="background:var(--amber);color:#000;border-color:var(--amber)">Run Eval</button>
+    <span id="eval-status" class="hidden" style="font-size:13px;color:var(--text2)">Running...</span>
+  </div>
+</div>
+
+<div class="controls">
+  <label style="font-size:13px;color:var(--text2)">Episodes:</label>
+  <input type="number" id="human-episodes" value="100" min="1" max="1000" style="width:70px;background:var(--card);color:var(--text);border:1px solid var(--border);padding:8px;border-radius:6px">
+  <button class="primary" id="btn-start">Start Human Eval</button>
+  <button id="btn-stop" class="hidden" style="background:var(--red);color:#fff;border-color:var(--red)">Stop</button>
+</div>
+
+<div class="stats">
+  <div class="stat">Episode: <span class="num" id="ep-num">0</span>/<span id="ep-total">100</span></div>
+  <div class="stat">Shots: <span class="num" id="shots">0</span></div>
+  <div class="stat">Ships sunk: <span class="num green" id="sunk">0</span>/5</div>
+  <div class="stat">Avg shots/sink: <span class="num" id="avg-sts">—</span></div>
+  <div class="stat">Reward: <span class="num" id="reward">0</span></div>
+</div>
+
+<div class="board-wrap">
+  <div class="board-section">
+    <h3 class="attack-title">Attack Board — Click to shoot</h3>
+    <div class="grid-wrap"><div class="grid" id="attack-grid"></div></div>
+  </div>
+</div>
+
+<div class="messages">
+  <h4>Log</h4>
+  <div class="msg-list" id="msg-list"></div>
+</div>
+
+<div class="overlay hidden" id="start-overlay">
+  <div class="overlay-card">
+    <h2>Human Eval</h2>
+    <p>100 episodes. Opponent places ships randomly. You shoot until all 5 ships are sunk.</p>
+    <p>Metrics: shots, avg_shots_to_sink, efficiency, reward (same as DQN training).</p>
+    <button id="btn-begin">Begin</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="episode-overlay">
+  <div class="overlay-card">
+    <h2 id="ep-title">Episode Complete</h2>
+    <p id="ep-subtitle"></p>
+    <button id="btn-continue">Next Episode</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="bot-eval-overlay">
+  <div class="overlay-card">
+    <h2 id="bot-eval-title">Bot Eval Results</h2>
+    <table class="summary-table" id="bot-eval-table"></table>
+    <button id="btn-bot-eval-done">Done</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="final-overlay">
+  <div class="overlay-card">
+    <h2 id="final-title">Session Complete</h2>
+    <table class="summary-table" id="summary-table"></table>
+    <button id="btn-done">Done</button>
+    <button id="btn-restart" style="margin-left:8px;background:var(--card);color:var(--text);border:1px solid var(--border)">Run Again</button>
+  </div>
+</div>
+
+<script>
+const G = 10;
+const COLS = 'ABCDEFGHIJ';
+
+let S = null;
+
+function buildGrid(container) {
+  container.innerHTML = '';
+  const corner = document.createElement('div');
+  corner.className = 'hdr corner';
+  container.appendChild(corner);
+  for (let c = 0; c < G; c++) {
+    const h = document.createElement('div');
+    h.className = 'hdr';
+    h.textContent = COLS[c];
+    h.style.gridRow = '1';
+    h.style.gridColumn = c + 2;
+    container.appendChild(h);
+  }
+  for (let r = 0; r < G; r++) {
+    const lbl = document.createElement('div');
+    lbl.className = 'hdr';
+    lbl.textContent = r;
+    lbl.style.gridRow = r + 2;
+    lbl.style.gridColumn = '1';
+    container.appendChild(lbl);
+    for (let c = 0; c < G; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      cell.style.gridRow = r + 2;
+      cell.style.gridColumn = c + 2;
+      container.appendChild(cell);
+    }
+  }
+}
+
+function getCell(r, c) {
+  return document.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+}
+
+async function api(method, path, body) {
+  const opts = {method, headers: {'Content-Type': 'application/json'}};
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  return res.json();
+}
+
+async function fetchState() { S = await api('GET', '/api/state'); }
+
+function render() {
+  if (!S) return;
+
+  document.getElementById('ep-num').textContent = S.episode;
+  document.getElementById('ep-total').textContent = S.total_episodes || 100;
+  document.getElementById('shots').textContent = S.shots;
+  document.getElementById('sunk').textContent = S.ships_sunk || 0;
+  document.getElementById('avg-sts').textContent =
+    S.avg_shots_to_sink != null ? S.avg_shots_to_sink.toFixed(1) : '—';
+  document.getElementById('reward').textContent =
+    S.episode_reward != null ? S.episode_reward.toFixed(1) : '0';
+
+  const btnStop = document.getElementById('btn-stop');
+  if (S.phase === 'shooting') {
+    btnStop.classList.remove('hidden');
+  } else {
+    btnStop.classList.add('hidden');
+  }
+
+  if (S.attack) {
+    for (let r = 0; r < G; r++) {
+      for (let c = 0; c < G; c++) {
+        const cell = getCell(r, c);
+        if (!cell) continue;
+        const v = S.attack[r][c];
+        cell.className = 'cell ' + v;
+        if (v === 'unknown' && S.phase === 'shooting') {
+          cell.classList.add('clickable');
+        }
+      }
+    }
+  }
+
+  const list = document.getElementById('msg-list');
+  list.innerHTML = '';
+  for (const msg of (S.messages || [])) {
+    const d = document.createElement('div');
+    d.className = 'm';
+    if (msg.includes('SUNK')) d.className += ' sunk-msg';
+    else if (msg.includes('HIT')) d.className += ' hit-msg';
+    d.textContent = msg;
+    list.appendChild(d);
+  }
+  list.scrollTop = list.scrollHeight;
+}
+
+function flashCell(cell, cls) {
+  cell.classList.add(cls);
+  setTimeout(() => cell.classList.remove(cls), 500);
+}
+
+document.getElementById('attack-grid').addEventListener('click', async (e) => {
+  const cell = e.target.closest('.cell');
+  if (!cell || !S || S.phase !== 'shooting') return;
+  if (!cell.classList.contains('unknown')) return;
+  const r = +cell.dataset.r, c = +cell.dataset.c;
+  const data = await api('POST', '/api/shoot', {row: r, col: c});
+  if (data.error) return;
+  S = data.state;
+
+  if (data.result === 'sunk') flashCell(cell, 'flash-sunk');
+  else if (data.result === 'hit') flashCell(cell, 'flash-hit');
+  else flashCell(cell, 'flash-miss');
+
+  render();
+
+  if (data.episode_complete) {
+    if (data.all_done) {
+      showFinalSummary('100 Episodes Complete');
+    } else {
+      document.getElementById('ep-title').textContent = `Episode ${S.episode} Complete`;
+      document.getElementById('ep-subtitle').textContent =
+        `${data.episode_data.shots} shots, avg ${data.episode_data.avg_shots_to_sink.toFixed(1)} shots/sink, reward ${data.episode_data.reward.toFixed(1)}`;
+      document.getElementById('episode-overlay').classList.remove('hidden');
+    }
+  }
+});
+
+function showFinalSummary(title) {
+  document.getElementById('final-title').textContent = title;
+  const tbl = document.getElementById('summary-table');
+  const sum = S.summary;
+  if (sum && sum.completed > 0) {
+    tbl.innerHTML = `
+      <tr><td>Episodes completed</td><td>${sum.completed}</td></tr>
+      <tr><td>Avg shots/episode</td><td>${sum.avg_shots.toFixed(1)}</td></tr>
+      <tr><td>Avg shots to sink</td><td>${sum.avg_shots_to_sink.toFixed(1)}</td></tr>
+      <tr><td>Avg efficiency</td><td>${(sum.avg_efficiency * 100).toFixed(1)}%</td></tr>
+      <tr><td>Avg reward</td><td>${sum.avg_reward.toFixed(1)}</td></tr>
+      <tr><td>Best (min shots)</td><td>${sum.min_shots}</td></tr>
+      <tr><td>Worst (max shots)</td><td>${sum.max_shots}</td></tr>
+    `;
+  } else {
+    tbl.innerHTML = '<tr><td colspan="2" style="text-align:center;padding:16px;color:var(--text2)">No episodes completed yet.</td></tr>';
+  }
+  document.getElementById('final-overlay').classList.remove('hidden');
+}
+
+document.getElementById('btn-start').addEventListener('click', async () => {
+  document.getElementById('start-overlay').classList.remove('hidden');
+});
+
+document.getElementById('btn-stop').addEventListener('click', () => {
+  const n = S?.completed_episodes?.length ?? 0;
+  showFinalSummary(n >= 100 ? '100 Episodes Complete' : 'Session Stopped');
+});
+
+document.getElementById('btn-begin').addEventListener('click', async () => {
+  document.getElementById('start-overlay').classList.add('hidden');
+  const episodes = parseInt(document.getElementById('human-episodes').value) || 100;
+  const data = await api('POST', '/api/start', {episodes});
+  S = data.state;
+  render();
+});
+
+document.getElementById('btn-continue').addEventListener('click', async () => {
+  document.getElementById('episode-overlay').classList.add('hidden');
+  const data = await api('POST', '/api/new-episode', {});
+  S = data.state;
+  render();
+});
+
+document.getElementById('btn-done').addEventListener('click', () => {
+  document.getElementById('final-overlay').classList.add('hidden');
+});
+
+document.getElementById('btn-restart').addEventListener('click', async () => {
+  document.getElementById('final-overlay').classList.add('hidden');
+  const data = await api('POST', '/api/start', {});
+  S = data.state;
+  render();
+});
+
+document.getElementById('eval-shooter-select').addEventListener('change', () => {
+  const sel = document.getElementById('eval-model-select');
+  sel.classList.toggle('hidden', document.getElementById('eval-shooter-select').value !== 'model');
+});
+
+document.getElementById('btn-run-eval').addEventListener('click', () => {
+  const shooter = document.getElementById('eval-shooter-select').value;
+  const episodes = parseInt(document.getElementById('eval-episodes').value) || 100;
+  const btn = document.getElementById('btn-run-eval');
+  const status = document.getElementById('eval-status');
+  const msgList = document.getElementById('msg-list');
+
+  if (shooter === 'model') {
+    const modelOpt = document.getElementById('eval-model-select').selectedOptions[0];
+    if (!modelOpt || !modelOpt.value) {
+      status.textContent = 'Select a model';
+      status.classList.remove('hidden');
+      return;
+    }
+  }
+
+  btn.disabled = true;
+  status.classList.remove('hidden');
+  status.textContent = `Running ${episodes} episodes...`;
+  msgList.innerHTML = '';
+  const addLog = (msg, cls = '') => {
+    const d = document.createElement('div');
+    d.className = 'm' + (cls ? ' ' + cls : '');
+    d.textContent = msg;
+    msgList.appendChild(d);
+    msgList.scrollTop = msgList.scrollHeight;
+  };
+
+  let url = `/api/eval-stream?shooter=${encodeURIComponent(shooter)}&episodes=${episodes}`;
+  if (shooter === 'model') {
+    const [path, mtype] = document.getElementById('eval-model-select').selectedOptions[0].value.split('|');
+    url += `&model_path=${encodeURIComponent(path)}&model_type=${encodeURIComponent(mtype)}`;
+  }
+  addLog(`Starting eval: ${shooter === 'model' ? 'model' : shooter}, ${episodes} episodes`);
+
+  const es = new EventSource(url);
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.msg) addLog(data.msg, data.type === 'progress' ? 'sunk-msg' : '');
+      if (data.type === 'done') {
+        es.close();
+        const result = data.result;
+        status.classList.add('hidden');
+        addLog(`Done. Avg shots: ${result.summary.avg_shots.toFixed(1)}, eff: ${(result.summary.avg_efficiency * 100).toFixed(1)}%`);
+        document.getElementById('bot-eval-title').textContent =
+          `${result.shooter} — ${episodes} Episodes`;
+        const sum = result.summary;
+        document.getElementById('bot-eval-table').innerHTML = `
+          <tr><td>Episodes</td><td>${sum.completed}</td></tr>
+          <tr><td>Avg shots/episode</td><td>${sum.avg_shots.toFixed(1)}</td></tr>
+          <tr><td>Avg shots to sink</td><td>${sum.avg_shots_to_sink.toFixed(1)}</td></tr>
+          <tr><td>Avg efficiency</td><td>${(sum.avg_efficiency * 100).toFixed(1)}%</td></tr>
+          <tr><td>Avg reward</td><td>${sum.avg_reward.toFixed(1)}</td></tr>
+          <tr><td>Best (min shots)</td><td>${sum.min_shots}</td></tr>
+          <tr><td>Worst (max shots)</td><td>${sum.max_shots}</td></tr>
+        `;
+        document.getElementById('bot-eval-overlay').classList.remove('hidden');
+        btn.disabled = false;
+      }
+      if (data.type === 'error' || data.error) {
+        es.close();
+        addLog('Error: ' + (data.error || data.message || 'Unknown'), 'hit-msg');
+        status.textContent = data.error || 'Error';
+        btn.disabled = false;
+      }
+    } catch (err) {
+      addLog('Parse error: ' + err.message, 'hit-msg');
+    }
+  };
+  es.onerror = () => {
+    es.close();
+    status.textContent = 'Connection error';
+    addLog('Connection closed or error', 'hit-msg');
+    btn.disabled = false;
+  };
+});
+
+document.getElementById('btn-bot-eval-done').addEventListener('click', () => {
+  document.getElementById('bot-eval-overlay').classList.add('hidden');
+});
+
+async function fetchModels() {
+  const data = await api('GET', '/api/models');
+  const sel = document.getElementById('eval-model-select');
+  sel.innerHTML = '<option value="">— Select model —</option>';
+  for (const m of data.models) {
+    const opt = document.createElement('option');
+    opt.value = m.path + '|' + m.type;
+    opt.textContent = `${m.type.toUpperCase()}: ${m.name}`;
+    sel.appendChild(opt);
+  }
+}
+
+async function init() {
+  buildGrid(document.getElementById('attack-grid'));
+  await fetchModels();
+  await fetchState();
+  if (S.phase === 'menu' || !S.attack) {
+    document.getElementById('start-overlay').classList.remove('hidden');
+    // Show empty board (all unknown) so user sees the grid before Begin
+    const grid = document.getElementById('attack-grid');
+    for (let r = 0; r < G; r++) {
+      for (let c = 0; c < G; c++) {
+        const cell = getCell(r, c);
+        if (cell) cell.className = 'cell unknown';
+      }
+    }
+  } else {
+    render();
+  }
+}
+
+init();
+</script>
+</body>
+</html>

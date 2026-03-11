@@ -45,7 +45,6 @@ class BattleshipEnv(gym.Env):
         reward_efficient_sink: float = 2.0,
         reward_adjacent_hit: float = 0.3,
         reward_shots_between_sinks: float = 0.0,
-        reward_chain: float = 0.0,
         render_mode: str | None = None,
         seed: int | None = None,
     ):
@@ -68,7 +67,6 @@ class BattleshipEnv(gym.Env):
         self.reward_efficient_sink = reward_efficient_sink
         self.reward_adjacent_hit = reward_adjacent_hit
         self.reward_shots_between_sinks = reward_shots_between_sinks
-        self.reward_chain = reward_chain
         self.render_mode = render_mode
 
         # Observation: (C, 10, 10) multi-channel binary feature planes
@@ -97,10 +95,6 @@ class BattleshipEnv(gym.Env):
         self._sink_stats: list[dict] = []
         self._shots_since_last_sink = 0
 
-        # Chain tracking (consecutive hits on same ship)
-        self._current_chain_ship: int | None = None
-        self._current_chain_length: int = 0
-
     def reset(
         self, *, seed: int | None = None, options: dict | None = None
     ) -> tuple[np.ndarray, dict]:
@@ -113,8 +107,6 @@ class BattleshipEnv(gym.Env):
         self._ship_first_hit_shot = {}
         self._sink_stats = []
         self._shots_since_last_sink = 0
-        self._current_chain_ship = None
-        self._current_chain_length = 0
 
         # Opponent places ships first
         self.opponent.place_ships(self._game.opponent_board)
@@ -213,24 +205,6 @@ class BattleshipEnv(gym.Env):
             was_adjacent = self._is_adjacent_to_unsunk_hit(row, col)
 
             hit, sunk = self._game.agent_shoot(row, col)
-
-            # Chain tracking: consecutive hits on same ship
-            if hit:
-                ship = self._game.opponent_board.get_ship_at(row, col)
-                ship_key = id(ship)
-                if ship_key == self._current_chain_ship:
-                    self._current_chain_length += 1
-                    if not sunk and self.reward_chain > 0:
-                        reward += self.reward_chain * (self._current_chain_length - 1)
-                else:
-                    self._current_chain_ship = ship_key
-                    self._current_chain_length = 1
-                if sunk:
-                    self._current_chain_ship = None
-                    self._current_chain_length = 0
-            else:
-                self._current_chain_ship = None
-                self._current_chain_length = 0
 
             if self.mode == "shooting":
                 # Shooting mode: no win/sink/hit/adjacent rewards; efficiency^2 dominates
@@ -341,8 +315,7 @@ class BattleshipEnv(gym.Env):
         """Multi-channel observation: (C, 10, 10) float32 planes.
         Ch0: unknown, Ch1: miss, Ch2: hit (unsunk), Ch3: sunk,
         Ch4: unshot cells adjacent to any unsunk hit,
-        Ch5: ship probability heatmap (density of valid placements),
-        Ch6: unshot cells adjacent to most recent hit only."""
+        Ch5: ship probability heatmap (density of valid placements)."""
         raw = self._game.opponent_board.observation_matrix()
         obs = np.zeros((NUM_OBS_CHANNELS, GRID_SIZE, GRID_SIZE), dtype=np.float32)
         for r in range(GRID_SIZE):
@@ -367,15 +340,6 @@ class BattleshipEnv(gym.Env):
                                 obs[4, nr, nc] = 1.0
         # Channel 5: ship probability heatmap
         obs[5] = self._compute_ship_probability_map(raw)
-        # Channel 6: unshot neighbours of most recent hit only
-        last_hit = self._game.opponent_board._last_hit
-        if last_hit is not None:
-            r, c = last_hit
-            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE:
-                    if obs[0, nr, nc] == 1.0:
-                        obs[6, nr, nc] = 1.0
         return obs
 
     def _compute_ship_probability_map(

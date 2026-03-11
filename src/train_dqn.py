@@ -273,14 +273,15 @@ def main():
     parser.add_argument("--reward-adjacent-hit", type=float, default=0.3)
     parser.add_argument("--reward-per-turn", type=float, default=-0.05)
     parser.add_argument("--reward-shots-between-sinks", type=float, default=0.0)
-    parser.add_argument("--reward-chain", type=float, default=0.0,
-                        help="Per-hit chain bonus for consecutive hits on same ship (default: 0)")
     parser.add_argument("--train-mode", type=str, default="full",
                         choices=["full", "shooting", "placement"],
                         help="Training mode: full (both heads), shooting (only shooting, "
                              "no opponent turn), placement (only placement, rated by attacker)")
     parser.add_argument("--logdir", type=str, default="runs/dqn",
                         help="TensorBoard log directory")
+    parser.add_argument("--save-checkpoint-every", type=int, default=0,
+                        help="Also save checkpoint copy at episode N, 2N, 3N... (0=disabled). "
+                             "E.g. 5000 saves model_ep5000.pt, model_ep10000.pt, etc.")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -310,7 +311,6 @@ def main():
         reward_shots_between_sinks=args.reward_shots_between_sinks,
         reward_efficient_sink=args.reward_efficient_sink,
         reward_adjacent_hit=args.reward_adjacent_hit,
-        reward_chain=args.reward_chain,
         seed=args.seed,
     )
 
@@ -493,6 +493,11 @@ def main():
             Path(args.save_path).parent.mkdir(parents=True, exist_ok=True)
             agent.save(args.save_path)
             print(f"  Saved to {args.save_path}", flush=True)
+            if args.save_checkpoint_every > 0 and ep % args.save_checkpoint_every == 0:
+                base = Path(args.save_path)
+                ckpt_path = base.parent / (base.stem + f"_ep{ep}" + base.suffix)
+                agent.save(str(ckpt_path))
+                print(f"  Checkpoint saved to {ckpt_path}", flush=True)
 
     agent.save(args.save_path)
     writer.close()

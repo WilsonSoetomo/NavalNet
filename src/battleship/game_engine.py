@@ -64,14 +64,12 @@ class Board:
         ]
         self._ships: list[Ship] = []
         self._ship_at: dict[tuple[int, int], Ship] = {}  # (r,c) -> Ship
-        self._last_hit: tuple[int, int] | None = None  # most recent hit (row, col)
 
     def reset(self) -> None:
         """Clear the board for a new game."""
         self._grid = [[CellState.WATER] * GRID_SIZE for _ in range(GRID_SIZE)]
         self._ships = []
         self._ship_at = {}
-        self._last_hit = None
 
     def place_ship(self, length: int, row: int, col: int, orientation: int) -> bool:
         """
@@ -126,10 +124,8 @@ class Board:
         if ship.is_sunk:
             for r, c in ship.cells():
                 self._grid[r][c] = CellState.SUNK
-            self._last_hit = None  # ship sunk, clear last hit
             return True, True
         self._grid[row][col] = CellState.HIT
-        self._last_hit = (row, col)  # most recent unsunk hit
         return True, False
 
     def get_cell_state(self, row: int, col: int) -> CellState:
