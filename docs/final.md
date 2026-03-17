@@ -20,11 +20,11 @@ title: Final Report
 
 NavalNet is a reinforcement learning project that trains AI agents to play the classic board game Battleship. The game is played on a 10×10 grid where each player places five ships of varying lengths (sizes 2, 3, 3, 4, and 5) and then takes turns shooting at coordinates on the opponent's hidden board. The goal is to sink all five of the opponent's ships before they sink yours.
 
-Battleship is a deceptively rich environment for machine learning research. The core difficulty is **partial observability**: the agent can only see the results of its own shots — hits and misses — but never the positions of the enemy's ships. This means the agent must reason under uncertainty, balancing *exploration* (scanning unknown cells) with *exploitation* (following up on known hits). The game also requires strategic **ship placement**, as a well-placed fleet forces the opponent to spend more shots finding ships. Together, these two subproblems — where to shoot, and where to place your ships — make Battleship a compelling benchmark for evaluating the sample efficiency, exploration behavior, and long-term planning of RL algorithms.
+Battleship is a deceptively rich environment for machine learning research. The core difficulty is **partial observability**: the agent can only see the results of its own shots (hits and misses) but never the positions of the enemy's ships. This means the agent must reason under uncertainty, balancing *exploration* (scanning unknown cells) with *exploitation* (following up on known hits). The game also requires strategic **ship placement**, as a well-placed fleet forces the opponent to spend more shots finding ships. Together, these two subproblems of where to shoot, and where to place your ships, make Battleship a compelling benchmark for evaluating the action efficiency, exploration behavior, and strategy optimization of RL algorithms.
 
-Beyond partial observability, Battleship presents the challenge of a **large, discrete action space** (100 possible shot coordinates) with highly **sparse rewards**: in a 100-shot game, the agent might only observe a handful of meaningful hits, while every other step is noise. Classical approaches such as the Hunt/Target strategy (shoot randomly until a hit, then systematically sink the ship) achieve roughly 53 average shots per game. We asked whether a learned RL policy — without any hard-coded game logic — could discover similar or superior strategies purely from trial and error.
+Beyond partial observability, Battleship presents the challenge of a **large, discrete action space** (100 possible shot coordinates) with highly **sparse rewards**: in a 100-shot game, the agent might only observe a handful of meaningful hits, while every other step is noise. Classical approaches such as the Hunt/Target strategy (shoot randomly in a checkerboard pattern until a hit, then systematically sink the ship) achieve roughly 53 average shots per game. We asked whether a learned RL policy could discover similar or superior strategies purely from trial and error.
 
-The project explores two major algorithm families: **Deep Q-Networks (DQN)**, a value-based off-policy method that learns expected cumulative rewards (Q-values) for each action in a given state, and **Proximal Policy Optimization (PPO)**, an on-policy policy-gradient method that learns a probability distribution over actions. We built a full Battleship environment from scratch, instrumented it with TensorBoard logging, developed an interactive human evaluation UI, and ran extensive experiments on a university HPC cluster (UCI's HPC3, via SLURM) to compare the two approaches.
+The project explores two major algorithm families: **Deep Q-Networks (DQN)**, a value-based off-policy method that learns expected cumulative rewards (Q-values) for each action in a given state, and **Proximal Policy Optimization (PPO)**, an on-policy policy-gradient method that learns a probability distribution over actions. We built a full Battleship environment from scratch, instrumented it with TensorBoard logging, developed an interactive human evaluation UI, and ran extensive experiments to compare the two approaches.
 
 ---
 
@@ -34,17 +34,18 @@ The project explores two major algorithm families: **Deep Q-Networks (DQN)**, a 
 
 We implemented a fully custom Battleship environment in Python, following an OpenAI Gym-style interface. The environment supports two players and handles all game rules: ship placement validation, shot resolution (hit/miss/sink), turn management, and win detection. The environment can be configured with different opponents and reward functions at runtime, making it easy to swap in algorithmic baselines (Random, Hunt/Target, Curriculum) without changing training code.
 
-The environment exposes **three training modes**:
+Initially, we trained our agents against a **gated curriculum opponent** that starts as the random bot an ramps behavior towards the Hunt/Target bot as the agent's rolling win rate passes a threshold (40%). This allows the agent to accumulate positive experiences early and only face harder opponents once it has learned basic shot efficiency. However the results were sub-optimal, the more difficult hunt/target opponent would win too quickly, not giving the agent enough info to learn from. It could finish the game in 56 shots compared to 90 from the initial agent. Reward punishments would drown out any useful information. Also, any decisions to increase opponent difficulty were mainly supported by the only wins against the easy random opponent
 
-- **Full mode**: Both placement and shooting are trained simultaneously in a live two-player game.
+To address this, we switched to self-play in an **isolated environment**. This way we can focus solely on shot efficiency metrics. The agent would train its heads individually using **two training modes**:
+
 - **Shooting mode**: The agent only trains the shooting head; ship placement is random, and the opponent's turn is disabled. This isolates shot efficiency from win/loss noise.
 - **Placement mode**: The agent only trains the placement head, scored by how many shots a Hunt/Target attacker needs to sink all five ships (more shots = better placement).
 
-Training was run on UCI's HPC3 cluster using SLURM batch jobs, with 16 CPU cores and 20 GB RAM per job, running for up to 24 hours per experiment.
+We also experimented a lot with training duration, starting with 2K, moving upwards of 50K. Any more episodes didn't seem to give any useful data regarding the efficacy of the algorithm. We also ran into significant decay which will be further discussed later. 
 
 ### Observation Space
 
-The earliest version of the agent received a single-channel 10×10 grid of integers (0 = unknown, 1 = miss, 2 = hit, 3 = sunk). This proved insufficient: the CNN had to discover through pure reward signal that integer value 2 means "shoot adjacent to this cell," a relationship that requires thousands of episodes to infer from scratch.
+The earliest version of the agent received a single-channel 10×10 grid of integers (0 = unknown, 1 = miss, 2 = hit, 3 = sunk). This proved insufficient: the CNN had to discover through pure reward signal that integer value 2 means "shoot adjacent to this cell," a relationship that requires many thousands of episodes to infer from scratch, if at all.
 
 We progressively expanded the observation to a **6-channel binary representation**, where each channel encodes a distinct, semantically meaningful aspect of the board state:
 
@@ -105,7 +106,7 @@ The loss minimized is the mean squared error between the predicted Q-value and t
 
 $$\mathcal{L}(\theta) = \mathbb{E}_{(s,a,r,s') \sim \mathcal{D}} \left[ \left( Q_\theta(s,a) - \left( r + \gamma \max_{a'} Q_{\bar\theta}(s',a') \right) \right)^2 \right]$$
 
-where $\mathcal{D}$ is a replay buffer, and $Q_{\bar\theta}$ is a periodically-synced target network.
+where $$\mathcal{D}$$ is a replay buffer, and $$Q_{\bar\theta}$$ is a periodically-synced target network.
 
 **Key DQN hyperparameters:**
 
@@ -122,6 +123,7 @@ where $\mathcal{D}$ is a replay buffer, and $Q_{\bar\theta}$ is a periodically-s
 | Gradient clipping | 1.0 (max norm) |
 | Buffer reset interval | every 5,000 episodes |
 
+
 The placement head uses Monte Carlo targets: the episode return is computed at the end of the game and assigned to all placement transitions, rather than bootstrapping with a next-state value.
 
 ### PPO Algorithm
@@ -130,7 +132,7 @@ PPO is an on-policy policy gradient method that maximizes a clipped surrogate ob
 
 $$\mathcal{L}^{CLIP}(\theta) = \mathbb{E}_t \left[ \min\left( r_t(\theta) \hat{A}_t,\ \text{clip}(r_t(\theta), 1-\varepsilon, 1+\varepsilon) \hat{A}_t \right) \right]$$
 
-where $r_t(\theta) = \pi_\theta(a_t | s_t) / \pi_{\theta_\text{old}}(a_t | s_t)$ is the probability ratio and $\hat{A}_t$ is the generalized advantage estimate (GAE). An entropy bonus $\mathcal{H}[\pi_\theta]$ is added to encourage exploration.
+where $$r_t(\theta) = \pi_\theta(a_t | s_t) / \pi_{\theta_\text{old}}(a_t | s_t)$$ is the probability ratio and $$\hat{A}_t$$ is the generalized advantage estimate (GAE). An entropy bonus $$\mathcal{H}[\pi_\theta]$$ is added to encourage exploration.
 
 **Key PPO hyperparameters:**
 
@@ -151,19 +153,8 @@ Reward design was one of the most iterative aspects of the project. Early experi
 | Miss penalty (per step) | −1.5 |
 | Per-turn living penalty | −0.15 |
 | Efficient sink reward | +12.0 |
-| Shots-between-sinks penalty | +0.1 (reward for minimizing gaps) |
-| Win/loss reward | 0.0 (disabled in shooting mode) |
-| Direct hit reward | 0.0 (disabled in shooting mode) |
 
 The **efficient sink** reward is the squared reciprocal of the average shots used to sink a ship relative to its size, rewarding the agent more for sinking ships quickly rather than just eventually.
-
-### Training Curriculum
-
-A key challenge was that the Hunt/Target opponent completes a game in roughly 54 shots, while an untrained agent needs approximately 90 shots. The agent could not win early in training, so every episode yielded the large lose penalty, masking all learning from hits and sinks.
-
-We developed a **gated curriculum opponent** that starts at a specified difficulty level (0 = full random) and ramps toward Hunt/Target behavior as the agent's rolling win rate passes a threshold (40%). This allows the agent to accumulate positive experiences early and only face harder opponents once it has learned basic shot efficiency. The curriculum parameters used in final runs: start difficulty 0.0, end difficulty 0.8, gate win rate 40%, ramp over 10,000 episodes.
-
-We also experimented with initializing DQN from previously-trained weights (setting ε to 0.3 instead of 1.0) so that the agent does not start from random exploration when facing a harder curriculum stage.
 
 ---
 
@@ -173,7 +164,7 @@ We also experimented with initializing DQN from previously-trained weights (sett
 
 After training, we evaluated all agents and human play over a common set of episodes using our interactive web-based evaluation tool. The primary metrics are average shots per episode (lower = better), average shots needed to sink each ship, and shot efficiency (ship size / shots used to sink it, as a percentage).
 
-| Metric | Human (Michael, 9 ep) | Random (100 ep) | Hunt/Target (100 ep) | DQN (10 ep, ep5000 weights) |
+| Metric | Human (Michael) | Random | Hunt/Target | DQN |
 |--------|----------------------|-----------------|----------------------|-----------------------------|
 | Avg shots/episode | **48.2** | 95.6 | 53.4 | 60.9 |
 | Avg shots to sink | 5.5 | 54.5 | 5.8 | 18.1 |
@@ -181,6 +172,7 @@ After training, we evaluated all agents and human play over a common set of epis
 | Avg reward | −26.1 | −140.5 | −31.6 | −64.7 |
 | Best game (min shots) | 32 | 71 | 30 | 45 |
 | Worst game (max shots) | 64 | 100 | 65 | 83 |
+
 
 The DQN agent substantially outperforms the random baseline (60.9 vs 95.6 average shots) and demonstrates learned behavior (best game: 45 shots), but does not yet match the Hunt/Target algorithmic bot (53.4 shots) or human play (48.2 shots). The gap in average efficiency (39.9% vs 72.9%) reflects the DQN's occasional tendency to wander away from active hits rather than finishing a ship, a failure mode described further below.
 
@@ -205,7 +197,7 @@ We attribute this gap to several structural factors:
 
 **Experience Replay vs. On-Policy Discard**: DQN's off-policy replay buffer retains rare successful hit sequences and reuses them for many updates. PPO discards all data after each policy update, losing the few positive experiences from early training when the agent rarely hit anything.
 
-**Discrete Action Fit**: Battleship requires selecting one exact coordinate out of 100. DQN directly assigns a scalar Q-value to each cell and picks the maximum — a natural fit for this structure. PPO must maintain and update a 100-way probability distribution, which is slower to concentrate probability mass onto the correct cells.
+**Discrete Action Fit**: Battleship requires selecting one exact coordinate out of 100. DQN directly assigns a scalar Q-value to each cell and picks the maximum, which is perfect for the discrete nature of the game. PPO must maintain and update a 100-way probability distribution, which is slower to concentrate probability mass onto the correct cells.
 
 **Forced Exploration vs. Entropy Collapse**: DQN's ε-greedy strategy mathematically guarantees board exploration (visiting random cells with probability ε). PPO relies on policy entropy; once PPO found a mediocre but safe strategy, its entropy collapsed and exploration essentially stopped, locking it into a suboptimal policy.
 
@@ -217,11 +209,9 @@ Replays recorded via TensorBoard and the interactive game UI show that the DQN a
 - **Imperfect chaining**: The agent sometimes abandons an active hit cluster to probe a different region of the board, returning to the first cluster only after a miss elsewhere. This reduces efficiency compared to the Hunt/Target bot, which always finishes the current target before moving on. We attempted to fix this by adding a "most recent hit adjacency" channel (biasing the agent toward the *latest* hit rather than *any* unsunk hit), but this change made performance worse rather than better, suggesting the signal introduced conflicting gradients.
 - **Parity preference**: The heatmap channel (Channel 5) appears to induce mild checkerboard parity in the agent's search pattern, though this is less crisp than the algorithmic checkerboard search.
 
-### Human Evaluation Tool
+### Evaluation Tool
 
-We built an interactive browser-based evaluation tool that allows a human player to play against the DQN agent or algorithmic bots (Random, Hunt/Target). The tool renders both the player's defense board and the attack board in real time, logs every shot and its result, and displays running statistics (shots, ships sunk, shot efficiency, reward). A separate "Human Eval" mode records the human player's own statistics over multiple episodes to enable direct head-to-head comparison.
-
-One developer (Michael) completed 9 evaluation episodes and averaged 48.2 shots per game with 68.7% efficiency — better than the DQN agent, confirming that the DQN has not yet reached human-level play, but substantially better than random targeting.
+We built an interactive browser-based evaluation tool that allows a human player to play against the DQN agent or algorithmic bots (Random, Hunt/Target). The tool renders both the player's defense board and the attack board in real time, logs every shot and its result, and displays running statistics (shots, ships sunk, shot efficiency, reward). A separate "Eval" mode records either human player's or model's own statistics over multiple episodes to enable direct head-to-head comparison.
 
 ---
 
@@ -243,7 +233,7 @@ One developer (Michael) completed 9 evaluation episodes and averaged 48.2 shots 
 
 **AI Tool Usage:**
 
-Claude (Anthropic) was used as a coding assistant throughout the project for: debugging environment logic, suggesting reward function formulations, identifying potential causes of DQN decay (replay buffer homogenization and overestimation bias), and drafting portions of this report. All code was reviewed, tested, and integrated by team members. Claude did not run experiments or make training decisions; those were performed entirely by the team on HPC3.
+Claude (Anthropic) was used as a coding assistant throughout the project for: debugging environment logic and implementing architectural and design decisions. Any generated code was manually reviewed post generation. All structural, parameter, design, and high-level (non-syntax) details were chosen by team.
 
 ---
 
