@@ -10,8 +10,7 @@ title: Final Report
 *Embed your project video here. Example for YouTube:*
 
 ```html
-<iframe width="560" height="315" src="https://www.youtube.com/embed/B2igygD3VVk"
-  title="NavalNet Demo" frameborder="0" allowfullscreen></iframe>
+<iframe width="1014" height="634" src="https://www.youtube.com/embed/B2igygD3VVk" title="NavalNet Final Presentation" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 ```
 
 ---
@@ -36,10 +35,11 @@ We implemented a fully custom Battleship environment in Python, following an Ope
 
 Initially, we trained our agents against a **gated curriculum opponent** that starts as the random bot an ramps behavior towards the Hunt/Target bot as the agent's rolling win rate passes a threshold (40%). This allows the agent to accumulate positive experiences early and only face harder opponents once it has learned basic shot efficiency. However the results were sub-optimal, the more difficult hunt/target opponent would win too quickly, not giving the agent enough info to learn from. It could finish the game in 56 shots compared to 90 from the initial agent. Reward punishments would drown out any useful information. Also, any decisions to increase opponent difficulty were mainly supported by the only wins against the easy random opponent
 
-![Curriculum training TensorBoard results](imgs/cirriculum_tensor_board_results.png)
+<img src="imgs/cirriculum_tensor_board_results.png" alt="Curriculum training TensorBoard results" style="max-width: 100%; height: auto;">
+
 *TensorBoard results from curriculum training — performance plateaus and becomes unstable as the opponent difficulty ramps up.*
 
-<video width="560" controls>
+<video style="max-width: 100%; height: auto;" controls>
   <source src="imgs/cirriculum.mp4" type="video/mp4">
 </video>
 
@@ -50,13 +50,14 @@ To address this, we switched to self-play in an **isolated environment**. This w
 - **Shooting mode**: The agent only trains the shooting head; ship placement is random, and the opponent's turn is disabled. This isolates shot efficiency from win/loss noise.
 - **Placement mode**: The agent only trains the placement head, scored by how many shots a Hunt/Target attacker needs to sink all five ships (more shots = better placement).
 
-<video width="560" controls>
+<video style="max-width: 100%; height: auto;" controls>
   <source src="imgs/isolated_env.mp4" type="video/mp4">
 </video>
 
 *Replay from the isolated shooting environment — the agent fires without an opponent turn, allowing pure evaluation of shot strategy.*
 
-![Placement head TensorBoard results](imgs/placement_head_results.png)
+<img src="imgs/placement_head_results.png" alt="Placement head TensorBoard results" style="max-width: 100%; height: auto;">
+
 *TensorBoard results from training the placement head — the agent learns to arrange ships so that a Hunt/Target attacker requires more shots to sink the fleet.*
 
 We also experimented a lot with training duration, starting with 2K, moving upwards of 50K. Any more episodes didn't seem to give any useful data regarding the efficacy of the algorithm. We also ran into significant decay which will be further discussed later. 
@@ -252,7 +253,8 @@ A higher value means the attacker needed more shots, indicating a stronger defen
 
 ### Quantitative Results
 
-![TensorBoard training visualization](imgs/tensor_board.png)
+<img src="imgs/tensor_board.png" alt="TensorBoard training visualization" style="max-width: 100%; height: auto;">
+
 *TensorBoard visualization of multiple training sessions running simultaneously, showing episode-level metrics across different configurations.*
 
 After training, we evaluated all agents and human play over a common set of episodes using our interactive web-based evaluation tool. The primary metrics are average shots per episode (lower = better), average shots needed to sink each ship, and shot efficiency (ship size / shots used to sink it, as a percentage).
@@ -273,7 +275,8 @@ The DQN agent substantially outperforms the random baseline (60.9 vs 95.6 averag
 
 TensorBoard logging revealed a consistent pattern across DQN runs: performance improves rapidly in the first ~5,000 episodes, then plateaus and gradually decays. This was observed in both full-game and isolated shooting-mode runs.
 
-![DQN decay over training](imgs/dqn_decay.png)
+<img src="imgs/dqn_decay.png" alt="DQN decay over training" style="max-width: 100%; height: auto;">
+
 *Average total shots over the course of training — performance peaks early then gradually decays, a pattern consistent across multiple training runs.*
 
 In the shooting-mode curriculum runs, the best DQN checkpoint (at episode 5,000) achieved approximately 28 average shots to sink all ships. After 50,000 episodes, performance had degraded back toward 55+ shots. The final model used for evaluation was therefore the **weights extracted at the peak (episode 5,000)**, rather than the end of training.
@@ -287,7 +290,8 @@ Attempted mitigations included periodic buffer resets (every 5,000 episodes), sl
 
 ### DQN vs. PPO Comparison
 
-![DQN vs PPO in the isolated environment](imgs/dqn_vs_ppo_isolated_env.png)
+<img src="imgs/dqn_vs_ppo_isolated_env.png" alt="DQN vs PPO in the isolated environment" style="max-width: 100%; height: auto;">
+
 *Side-by-side comparison of DQN and PPO training curves in the isolated shooting environment.*
 
 DQN consistently outperformed PPO across all experiments. The smoothed average shots-to-sink for the best DQN run was approximately 28.5 vs. 52.8 for the comparable PPO run at the same episode count.
