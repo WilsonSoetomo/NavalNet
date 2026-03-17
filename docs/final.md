@@ -9,9 +9,13 @@ title: Final Report
 
 *Embed your project video here. Example for YouTube:*
 
-```html
-<iframe width="1014" height="634" src="https://www.youtube.com/embed/B2igygD3VVk" title="NavalNet Final Presentation" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-```
+[![NavalNet Final Presentation](https://img.youtube.com/vi/B2igygD3VVk/0.jpg)](https://www.youtube.com/watch?v=B2igygD3VVk)
+
+*Click the image above to watch our project video on YouTube.*
+
+<!-- 
+Alternatively, if embedding is required, try using a Markdown video link or double-check platform restrictions.
+-->
 
 ---
 
@@ -151,7 +155,11 @@ PPO is an on-policy policy gradient method that maximizes a clipped surrogate ob
 
 $$\mathcal{L}^{CLIP}(\theta) = \mathbb{E}_t \left[ \min\left( r_t(\theta) \hat{A}_t,\ \text{clip}(r_t(\theta), 1-\varepsilon, 1+\varepsilon) \hat{A}_t \right) \right]$$
 
-where $$r_t(\theta) = \pi_\theta(a_t | s_t) / \pi_{\theta_\text{old}}(a_t | s_t)$$ is the probability ratio and $$\hat{A}_t$$ is the generalized advantage estimate (GAE). An entropy bonus $$\mathcal{H}[\pi_\theta]$$ is added to encourage exploration.
+where
+
+- $r_t(\theta) = \frac{\pi_\theta(a_t | s_t)}{\pi_{\theta_\text{old}}(a_t | s_t)}$ is the probability ratio,
+- $\hat{A}_t$ is the generalized advantage estimate (GAE),
+- and an entropy bonus $\mathcal{H}[\pi_\theta]$ is added to encourage exploration.
 
 **Key PPO hyperparameters:**
 
