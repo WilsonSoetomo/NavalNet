@@ -10,7 +10,7 @@ title: Final Report
 *Embed your project video here. Example for YouTube:*
 
 ```html
-<iframe width="560" height="315" src="https://www.youtube.com/embed/YOUR_VIDEO_ID"
+<iframe width="560" height="315" src="https://www.youtube.com/embed/B2igygD3VVk"
   title="NavalNet Demo" frameborder="0" allowfullscreen></iframe>
 ```
 
@@ -36,10 +36,28 @@ We implemented a fully custom Battleship environment in Python, following an Ope
 
 Initially, we trained our agents against a **gated curriculum opponent** that starts as the random bot an ramps behavior towards the Hunt/Target bot as the agent's rolling win rate passes a threshold (40%). This allows the agent to accumulate positive experiences early and only face harder opponents once it has learned basic shot efficiency. However the results were sub-optimal, the more difficult hunt/target opponent would win too quickly, not giving the agent enough info to learn from. It could finish the game in 56 shots compared to 90 from the initial agent. Reward punishments would drown out any useful information. Also, any decisions to increase opponent difficulty were mainly supported by the only wins against the easy random opponent
 
+![Curriculum training TensorBoard results](imgs/cirriculum_tensor_board_results.png)
+*TensorBoard results from curriculum training — performance plateaus and becomes unstable as the opponent difficulty ramps up.*
+
+<video width="560" controls>
+  <source src="imgs/cirriculum.mp4" type="video/mp4">
+</video>
+
+*Replay of an episode from curriculum training, showing the agent's shot pattern against the gated opponent.*
+
 To address this, we switched to self-play in an **isolated environment**. This way we can focus solely on shot efficiency metrics. The agent would train its heads individually using **two training modes**:
 
 - **Shooting mode**: The agent only trains the shooting head; ship placement is random, and the opponent's turn is disabled. This isolates shot efficiency from win/loss noise.
 - **Placement mode**: The agent only trains the placement head, scored by how many shots a Hunt/Target attacker needs to sink all five ships (more shots = better placement).
+
+<video width="560" controls>
+  <source src="imgs/isolated_env.mp4" type="video/mp4">
+</video>
+
+*Replay from the isolated shooting environment — the agent fires without an opponent turn, allowing pure evaluation of shot strategy.*
+
+![Placement head TensorBoard results](imgs/placement_head_results.png)
+*TensorBoard results from training the placement head — the agent learns to arrange ships so that a Hunt/Target attacker requires more shots to sink the fleet.*
 
 We also experimented a lot with training duration, starting with 2K, moving upwards of 50K. Any more episodes didn't seem to give any useful data regarding the efficacy of the algorithm. We also ran into significant decay which will be further discussed later. 
 
@@ -146,21 +164,96 @@ where $$r_t(\theta) = \pi_\theta(a_t | s_t) / \pi_{\theta_\text{old}}(a_t | s_t)
 
 ### Reward Function
 
-Reward design was one of the most iterative aspects of the project. Early experiments used a single large win/lose reward (`+100`/`-100`), which drowned out the sparse hit/sink signals. We progressively rebalanced the reward function to provide denser, more informative feedback. The final shooting-mode reward function (which zeros out win/lose signals entirely) is:
+Reward design was one of the most iterative aspects of the project. The fundamental challenge in Battleship is **reward sparsity**: in a 100-cell grid with only 17 ship cells (sizes 2 + 3 + 3 + 4 + 5), the vast majority of actions produce misses. A reward function that only signals at game end (win/lose) leaves the agent with almost no gradient to learn from during the ~80 miss steps that dominate each episode.
+
+#### Full-Mode Rewards (Early Experiments)
+
+Our initial reward function provided signals for every event type:
 
 | Signal | Value |
 |--------|-------|
-| Miss penalty (per step) | −1.5 |
-| Per-turn living penalty | −0.15 |
-| Efficient sink reward | +12.0 |
+| Win | +100.0 |
+| Lose | −100.0 |
+| Hit | +1.0 |
+| Miss | −0.5 |
+| Sink | +5.0 |
+| Adjacent hit bonus | +0.3 |
+| Efficient sink bonus | +2.0 × η |
+| Per-turn penalty | −0.05 |
 
-The **efficient sink** reward is the squared reciprocal of the average shots used to sink a ship relative to its size, rewarding the agent more for sinking ships quickly rather than just eventually.
+where the sink efficiency η for a given ship is defined as:
+
+$$\eta = \frac{L}{S}$$
+
+with $L$ = ship length (number of cells the ship occupies) and $S$ = the number of agent shots elapsed from the first hit on that ship to the sinking shot (inclusive). A perfect follow-up sequence where every shot after the first hit lands on the same ship gives $\eta = 1.0$; wandering away to miss other cells before finishing drives $\eta$ toward 0.
+
+This formulation suffered from two problems. First, the large win/lose rewards ($\pm 100$) dominated the episode return and drowned out the sparser but more informative hit/sink signals. Q-value estimates were pulled toward modeling win probability rather than shot efficiency, which is the metric we actually care about. Second, when training against a curriculum opponent that could finish the game in ~56 shots (compared to the agent's ~90), the −100 loss penalty accumulated so frequently that negative reward signals overwhelmed any positive learning signal from successful hits.
+
+#### Shooting-Mode Rewards (Final Design)
+
+After switching to the isolated shooting environment, we redesigned the reward function to focus exclusively on shot efficiency. Win/lose, hit, sink, and adjacent-hit rewards were all zeroed out. The final reward at each time step $t$ is:
+
+$$r_t = r_{\text{turn}} + r_{\text{outcome}}$$
+
+where $r_{\text{turn}} = -0.15$ is a constant per-turn living penalty applied to every step, and $r_{\text{outcome}}$ depends on the shot result:
+
+**On a miss:**
+
+$$r_{\text{outcome}} = r_{\text{miss}} = -1.5$$
+
+**On a hit that does not sink a ship:**
+
+$$r_{\text{outcome}} = 0$$
+
+**On a hit that sinks a ship of length $L$:**
+
+$$r_{\text{outcome}} = \alpha \cdot \eta^2 - \beta \cdot \Delta$$
+
+where:
+- $\eta = L / S$ is the sink efficiency (as defined above)
+- $\alpha = 12.0$ is the efficient sink coefficient
+- $\beta = 0.1$ is the inter-sink gap penalty coefficient
+- $\Delta$ is the number of shots fired since the last ship was sunk (reset to 0 after each sink)
+
+The key design choice is **squaring the efficiency** ($\eta^2$ rather than $\eta$). This creates a nonlinear reward landscape that sharply distinguishes perfect follow-ups from sloppy ones. Consider a ship of length 3:
+
+| Shots to sink ($S$) | Efficiency $\eta = 3/S$ | Linear reward $\alpha \cdot \eta$ | Squared reward $\alpha \cdot \eta^2$ |
+|---------------------|-------------------------|-----------------------------------|--------------------------------------|
+| 3 (perfect) | 1.00 | 12.0 | 12.0 |
+| 4 | 0.75 | 9.0 | 6.75 |
+| 5 | 0.60 | 7.2 | 4.32 |
+| 6 | 0.50 | 6.0 | 3.00 |
+| 10 | 0.30 | 3.6 | 1.08 |
+
+Under linear scaling, sinking a length-3 ship in 6 shots still earns half the maximum reward. Under quadratic scaling, the same outcome earns only 25% of the maximum. This steeper dropoff creates a stronger gradient toward tight follow-up behavior and discourages the agent from wandering away from active hits.
+
+The **inter-sink gap penalty** ($-\beta \cdot \Delta$) complements the efficiency reward by penalizing wasted shots between sinks. Even if the agent eventually sinks a ship efficiently, firing 20 exploratory misses before finding it is penalized. Together, these two terms encourage both *finding* ships quickly and *finishing* them once found.
+
+The **per-turn penalty** ($r_{\text{turn}} = -0.15$) ensures the agent accumulates negative reward on every step regardless of outcome, creating pressure to end the game in as few total shots as possible. Combined with the miss penalty, a miss step costs the agent $-0.15 + (-1.5) = -1.65$ total, while a non-sinking hit costs only $-0.15$, providing clear signal that hits are preferable.
+
+| Signal | Value |
+|--------|-------|
+| Per-turn living penalty | −0.15 |
+| Miss penalty | −1.5 |
+| Efficient sink reward | $+12.0 \cdot \eta^2$ |
+| Inter-sink gap penalty | $-0.1 \cdot \Delta$ |
+
+#### Placement-Mode Rewards
+
+The placement head uses a fundamentally different reward structure. Rather than receiving step-by-step feedback, the agent places all five ships and then a Hunt/Target attacker simulates a full game against that placement. The reward is the total number of attacker shots required to sink all ships:
+
+$$R_{\text{placement}} = N_{\text{attacker\;shots}}$$
+
+A higher value means the attacker needed more shots, indicating a stronger defensive placement. This Monte Carlo-style reward is assigned retroactively to all five placement transitions in the episode, so each ship placement decision receives credit proportional to the overall fleet quality rather than its individual contribution. Typical Hunt/Target attackers need 50–65 shots against random placements; a well-trained placement head pushes this toward 65–70+.
 
 ---
 
 ## Evaluation
 
 ### Quantitative Results
+
+![TensorBoard training visualization](imgs/tensor_board.png)
+*TensorBoard visualization of multiple training sessions running simultaneously, showing episode-level metrics across different configurations.*
 
 After training, we evaluated all agents and human play over a common set of episodes using our interactive web-based evaluation tool. The primary metrics are average shots per episode (lower = better), average shots needed to sink each ship, and shot efficiency (ship size / shots used to sink it, as a percentage).
 
@@ -180,6 +273,9 @@ The DQN agent substantially outperforms the random baseline (60.9 vs 95.6 averag
 
 TensorBoard logging revealed a consistent pattern across DQN runs: performance improves rapidly in the first ~5,000 episodes, then plateaus and gradually decays. This was observed in both full-game and isolated shooting-mode runs.
 
+![DQN decay over training](imgs/dqn_decay.png)
+*Average total shots over the course of training — performance peaks early then gradually decays, a pattern consistent across multiple training runs.*
+
 In the shooting-mode curriculum runs, the best DQN checkpoint (at episode 5,000) achieved approximately 28 average shots to sink all ships. After 50,000 episodes, performance had degraded back toward 55+ shots. The final model used for evaluation was therefore the **weights extracted at the peak (episode 5,000)**, rather than the end of training.
 
 We identified two likely causes of this decay:
@@ -190,6 +286,9 @@ We identified two likely causes of this decay:
 Attempted mitigations included periodic buffer resets (every 5,000 episodes), slower epsilon decay, and higher epsilon floors (ε_end = 0.10). While these helped slow the decay, they did not eliminate it. Proposed future solutions include Prioritized Experience Replay, Double DQN, and cyclic epsilon schedules.
 
 ### DQN vs. PPO Comparison
+
+![DQN vs PPO in the isolated environment](imgs/dqn_vs_ppo_isolated_env.png)
+*Side-by-side comparison of DQN and PPO training curves in the isolated shooting environment.*
 
 DQN consistently outperformed PPO across all experiments. The smoothed average shots-to-sink for the best DQN run was approximately 28.5 vs. 52.8 for the comparable PPO run at the same episode count.
 
