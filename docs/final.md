@@ -157,9 +157,9 @@ $$\mathcal{L}^{CLIP}(\theta) = \mathbb{E}_t \left[ \min\left( r_t(\theta) \hat{A
 
 where
 
-- $r_t(\theta) = \frac{\pi_\theta(a_t | s_t)}{\pi_{\theta_\text{old}}(a_t | s_t)}$ is the probability ratio,
-- $\hat{A}_t$ is the generalized advantage estimate (GAE),
-- and an entropy bonus $\mathcal{H}[\pi_\theta]$ is added to encourage exploration.
+- $$r_t(\theta) = \frac{\pi_\theta(a_t | s_t)}{\pi_{\theta_\text{old}}(a_t | s_t)}$$ is the probability ratio,
+- $$\hat{A}_t$$ is the generalized advantage estimate (GAE),
+- and an entropy bonus $$\mathcal{H}[\pi_\theta]$$ is added to encourage exploration.
 
 **Key PPO hyperparameters:**
 
